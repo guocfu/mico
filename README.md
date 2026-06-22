@@ -1,9 +1,9 @@
 # mico
 
-`mico` is a tiny local coding agent demo. The first version runs without model keys or network access:
+`mico` is a tiny local coding agent demo. By default it runs without model keys or network access:
 
 1. A CLI receives a user prompt.
-2. A fake model asks to call a read-only tool.
+2. A model asks to call a workspace tool.
 3. The agent executes the tool inside the workspace.
 4. The fake model returns a final answer.
 5. Run traces are saved under `.mico/runs/`.
@@ -34,7 +34,14 @@ You can also use `--api-key-env` to read from a different environment variable, 
 
 ## Tools
 
-Currently only read-only tools are supported: `list_files`, `read_file`, `search`. All paths are sandboxed inside the workspace.
+Supported tools:
+
+- `list_files` — list directory contents
+- `read_file` — read a file by line range
+- `search` — search text in workspace
+- `patch_file` — exact text replacement in an existing file (requires `--approval auto`)
+
+All paths are sandboxed inside the workspace. `patch_file` requires `old_text` to appear exactly once in the target file.
 
 ## Test
 

@@ -30,22 +30,24 @@
 
 ## 当前实现策略
 
-- 第一版只做最小 demo，不接真实模型。
-- 使用 `FakeModelClient` 跑通：
+- 做一个可以本地跑通的 coding agent demo。
+- 使用 `FakeModelClient` 作为默认 provider，`openai-compatible` 作为可选真实模型 provider：
   - CLI 接收任务；
   - agent loop 构造 prompt；
-  - fake model 返回 `<tool>{...}</tool>`；
-  - agent 执行只读工具；
-  - fake model 返回 `<final>...</final>`；
+  - 模型返回 `<tool>{...}</tool>`；
+  - agent 执行工具；
+  - 模型返回 `<final>...</final>`；
   - CLI 打印最终答案；
   - 运行记录写入 `.mico/runs/<run_id>/`。
-- 第一版只允许只读工具：
+- 允许的工具：
   - `list_files`
   - `read_file`
   - `search`
-- 第一版不做：
-  - 真实模型 API；
-  - 文件写入或 patch 工具；
+  - `patch_file`（精确文本替换，受 approval policy 控制）
+- 不做：
+  - 真实模型 API 作为默认配置；
+  - `write_file` 或 shell 工具；
+  - git 自动提交；
   - 交互式 REPL；
   - 长期记忆；
   - 多 agent；
@@ -86,4 +88,4 @@
   - 测试全部通过；
   - CLI 能打印最终回答；
   - `.mico/runs/` 下生成 `trace.jsonl`、`state.json`、`report.json`；
-  - 不需要任何 API key 或网络访问。
+  - 默认 fake provider 不需要任何 API key 或网络访问。

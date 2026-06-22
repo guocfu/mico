@@ -11,22 +11,23 @@
 
 ## 当前目标
 
-- 先做一个可以本地跑通的小 coding agent demo。
-- 第一版使用 `FakeModelClient`，不接真实模型 API。
+- 做一个可以本地跑通的 coding agent demo。
+- 使用 `FakeModelClient` 作为默认 provider，`openai-compatible` 作为可选真实模型 provider。
 - 跑通路径：
   - CLI 接收用户任务；
-  - agent loop 调用 fake model；
-  - fake model 返回 `<tool>{...}</tool>`；
-  - agent 执行只读工具；
-  - fake model 返回 `<final>...</final>`；
+  - agent loop 调用模型；
+  - 模型返回 `<tool>{...}</tool>`；
+  - agent 执行工具；
+  - 模型返回 `<final>...</final>`；
   - CLI 输出最终回答；
   - 运行记录写入 `.mico/runs/<run_id>/`。
 
-## 严格禁止在第一版加入
+## 严格禁止加入
 
-- 真实模型 API；
-- 文件写入工具；
-- patch 工具；
+- 真实模型 API 作为默认配置；
+- `write_file` 工具；
+- shell 工具；
+- git 自动提交；
 - 交互式 REPL；
 - 长期记忆；
 - 多 agent；
@@ -40,8 +41,9 @@
 - `list_files(path=".")`
 - `read_file(path, start=1, end=80)`
 - `search(pattern, path=".")`
+- `patch_file(path, old_text, new_text)` — 精确文本替换，受 approval policy 控制
 
-所有路径必须限制在 workspace 内，禁止 `..` 或绝对路径逃逸。
+所有路径必须限制在 workspace 内，禁止 `..` 或绝对路径逃逸。`patch_file` 要求 `old_text` 在文件中恰好出现一次。
 
 ## 工作方式
 

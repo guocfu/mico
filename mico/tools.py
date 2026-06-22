@@ -13,6 +13,7 @@ TOOL_SPECS = {
     "list_files": ToolSpec("List files in the workspace.", '{"path": "str=."}'),
     "read_file": ToolSpec("Read a UTF-8 file by line range.", '{"path": "str", "start": "int=1", "end": "int=80"}'),
     "search": ToolSpec("Search text in the workspace.", '{"pattern": "str", "path": "str=."}'),
+    "patch_file": ToolSpec("Exact text replacement in a file.", '{"path": "str", "old_text": "str", "new_text": "str"}'),
 }
 
 
@@ -40,6 +41,16 @@ def validate_tool(workspace, name, args):
             raise ValueError("pattern must not be empty")
         workspace.path(args.get("path", "."))
         return
+    if name == "patch_file":
+        path = workspace.path(args["path"])
+        if not path.is_file():
+            raise ValueError("path is not a file")
+        old_text = str(args.get("old_text", ""))
+        if not old_text:
+            raise ValueError("old_text must not be empty")
+        if "new_text" not in args:
+            raise ValueError("new_text field is required")
+        return
 
 
 def run_tool(workspace, name, args):
@@ -50,6 +61,8 @@ def run_tool(workspace, name, args):
         return _read_file(workspace, args)
     if name == "search":
         return _search(workspace, args)
+    if name == "patch_file":
+        return _patch_file(workspace, args)
     raise ValueError(f"unknown tool: {name}")
 
 
@@ -103,3 +116,18 @@ def _search(workspace, args):
                 if len(matches) >= 80:
                     return "\n".join(matches)
     return "\n".join(matches) or "(no matches)"
+
+
+def _patch_file(workspace, args):
+    path = workspace.path(args["path"])
+    old_text = str(args["old_text"])
+    new_text = str(args["new_text"])
+    content = path.read_text(encoding="utf-8")
+    count = content.count(old_text)
+    if count == 0:
+        raise ValueError("old_text not found in file")
+    if count > 1:
+        raise ValueError(f"old_text found {count} times, expected exactly 1")
+    updated = content.replace(old_text, new_text, 1)
+    path.write_text(updated, encoding="utf-8")
+    return f"patched {workspace.relative(path)}"

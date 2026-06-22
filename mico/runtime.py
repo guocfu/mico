@@ -59,6 +59,9 @@ class Mico:
             "You are mico, a tiny local coding agent.\n"
             "Respond with exactly one of these XML blocks:\n"
             '<tool>{"name":"list_files","args":{"path":"."}}</tool>\n'
+            '<tool>{"name":"read_file","args":{"path":"file","start":1,"end":80}}</tool>\n'
+            '<tool>{"name":"search","args":{"pattern":"text","path":"."}}</tool>\n'
+            '<tool>{"name":"patch_file","args":{"path":"file","old_text":"old","new_text":"new"}}</tool>\n'
             "<final>answer</final>\n\n"
             f"Workspace: {self.workspace.root}\n"
             f"User request: {user_message}\n"
