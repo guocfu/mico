@@ -3,7 +3,7 @@ import re
 
 from .agent_loop import AgentLoop
 from .security import redact_artifact
-from .tool_executor import ToolExecutor
+from .tool_executor import ToolExecutor, ToolResult
 
 
 class Mico:
@@ -15,15 +15,25 @@ class Mico:
         self.max_steps = max_steps
         self.history = []
         self.tool_executor = ToolExecutor(workspace, approval_policy=approval_policy)
+        self._last_tool_signature = None
 
     def ask(self, user_message):
+        self._last_tool_signature = None
         return AgentLoop(self).run(user_message)
 
     def record(self, item):
         self.history.append(dict(item))
 
     def execute_tool(self, name, args):
-        return self.tool_executor.execute(name, args or {})
+        args = args or {}
+        signature = name + "\0" + json.dumps(args, sort_keys=True, ensure_ascii=False)
+        if signature == self._last_tool_signature:
+            return ToolResult(
+                content=f"error: repeated identical tool call for {name}",
+                metadata={"approval_policy": self.approval_policy, "ok": False},
+            )
+        self._last_tool_signature = signature
+        return self.tool_executor.execute(name, args)
 
     def emit_trace(self, task_state, event_type, payload=None):
         event = {"event": event_type, "run_id": task_state.run_id, **dict(payload or {})}
