@@ -1,7 +1,7 @@
 import time
 
 from .state import TaskState, now
-from .workspace import clip
+from .workspace import clip, clip_artifact
 
 
 class AgentLoop:
@@ -43,7 +43,7 @@ class AgentLoop:
                 agent.emit_trace(
                     task_state,
                     "tool_executed",
-                    {"name": name, "args": args, "result": clip(result.content, 500), **result.metadata},
+                    {"name": name, "args": clip_artifact(args, 500), "result": clip(result.content, 500), **result.metadata},
                 )
                 continue
 

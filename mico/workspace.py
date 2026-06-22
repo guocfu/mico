@@ -12,6 +12,18 @@ def clip(text, limit):
     return text[: limit - 3] + "..."
 
 
+def clip_artifact(value, limit=500):
+    if isinstance(value, dict):
+        return {k: clip_artifact(v, limit) for k, v in value.items()}
+    if isinstance(value, list):
+        return [clip_artifact(item, limit) for item in value]
+    if isinstance(value, tuple):
+        return tuple(clip_artifact(item, limit) for item in value)
+    if isinstance(value, str):
+        return clip(value, limit)
+    return value
+
+
 class Workspace:
     def __init__(self, root):
         self.root = Path(root).resolve()

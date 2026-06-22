@@ -3,7 +3,7 @@ import os
 import pytest
 
 from mico.tools import TOOL_SPECS, run_tool
-from mico.workspace import Workspace
+from mico.workspace import Workspace, clip_artifact
 
 
 def test_list_files(tmp_path):
@@ -169,3 +169,50 @@ class TestPatchFile:
                 "old_text": "a",
                 "new_text": "b",
             })
+
+
+class TestClipArtifact:
+    def test_short_string_unchanged(self):
+        assert clip_artifact("hello") == "hello"
+
+    def test_long_string_clipped(self):
+        result = clip_artifact("x" * 600)
+        assert len(result) == 500
+        assert result.endswith("...")
+
+    def test_custom_limit(self):
+        result = clip_artifact("x" * 100, limit=50)
+        assert len(result) == 50
+        assert result.endswith("...")
+
+    def test_dict_values_clipped(self):
+        result = clip_artifact({"key": "a" * 600})
+        assert len(result["key"]) == 500
+        assert result["key"].endswith("...")
+
+    def test_dict_keys_preserved(self):
+        result = clip_artifact({"short_key": "val"})
+        assert "short_key" in result
+
+    def test_list_items_clipped(self):
+        result = clip_artifact(["a" * 600, "short"])
+        assert len(result[0]) == 500
+        assert result[1] == "short"
+
+    def test_tuple_items_clipped(self):
+        result = clip_artifact(("a" * 600, "b"))
+        assert isinstance(result, tuple)
+        assert len(result[0]) == 500
+        assert result[1] == "b"
+
+    def test_int_unchanged(self):
+        assert clip_artifact(42) == 42
+
+    def test_none_unchanged(self):
+        assert clip_artifact(None) is None
+
+    def test_nested_structure(self):
+        result = clip_artifact({"args": {"old_text": "x" * 600, "new_text": "y" * 600}})
+        assert len(result["args"]["old_text"]) == 500
+        assert len(result["args"]["new_text"]) == 500
+        assert result["args"]["old_text"].endswith("...")

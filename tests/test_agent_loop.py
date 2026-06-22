@@ -1,8 +1,17 @@
+import json
+
 from mico.providers import FakeModelClient
 from mico.runtime import Mico
 from mico.state import RunStore
 from mico.tool_executor import ToolExecutor
 from mico.workspace import Workspace
+
+
+def _trace_events(run_root):
+    run_dirs = list(run_root.iterdir())
+    assert len(run_dirs) == 1
+    trace_path = run_dirs[0] / "trace.jsonl"
+    return [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
 
 
 def test_readonly_tool_allowed_under_approval_never(tmp_path):
@@ -288,3 +297,74 @@ def test_repeated_tool_result_metadata_has_approval_policy(tmp_path):
     assert "repeated" in second.content
     assert second.metadata["ok"] is False
     assert second.metadata["approval_policy"] == "auto"
+
+
+def test_trace_clips_long_tool_args(tmp_path):
+    long_old = "x" * 600
+    long_new = "y" * 600
+    (tmp_path / "code.py").write_text(long_old + "\n", encoding="utf-8")
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient([
+            f'<tool>{{"name":"patch_file","args":{{"path":"code.py","old_text":"{long_old}","new_text":"{long_new}"}}}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    answer = agent.ask("fix code")
+
+    assert answer == "done"
+    tool_events = [event for event in _trace_events(tmp_path / ".mico" / "runs") if event["event"] == "tool_executed"]
+    assert len(tool_events) == 1
+    event = tool_events[0]
+    assert isinstance(event["args"], dict)
+    assert len(event["args"]["old_text"]) == 500
+    assert event["args"]["old_text"].endswith("...")
+    assert len(event["args"]["new_text"]) == 500
+    assert event["args"]["new_text"].endswith("...")
+
+
+def test_history_preserves_full_tool_args(tmp_path):
+    long_old = "a" * 600
+    long_new = "b" * 600
+    (tmp_path / "code.py").write_text(long_old + "\n", encoding="utf-8")
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient([
+            f'<tool>{{"name":"patch_file","args":{{"path":"code.py","old_text":"{long_old}","new_text":"{long_new}"}}}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    agent.ask("fix code")
+
+    tool_entry = agent.history[1]
+    assert tool_entry["role"] == "tool"
+    assert tool_entry["args"]["old_text"] == long_old
+    assert tool_entry["args"]["new_text"] == long_new
+
+
+def test_trace_redaction_still_works_after_clipping(tmp_path, monkeypatch):
+    monkeypatch.setenv("MY_SECRET", "secret-value-xyz")
+    long_secret = "secret-value-xyz" * 40
+    (tmp_path / "notes.txt").write_text("hello\n", encoding="utf-8")
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient([
+            f'<tool>{{"name":"search","args":{{"pattern":"{long_secret}","path":"."}}}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    agent.ask("search")
+
+    events = _trace_events(tmp_path / ".mico" / "runs")
+    full_text = json.dumps(events, ensure_ascii=False)
+    assert "secret-value-xyz" not in full_text
+    assert "[REDACTED]" in full_text
