@@ -71,6 +71,9 @@
   - `claude --session-id 82d2feb8-7272-4468-996f-9e4f9a24683c -p "..."`
 - 除非用户明确要求更换会话，不要新建随机 Claude Code 会话来处理 `mico` 主要实现。
 - 如果固定 session 调用失败，Codex 应先报告失败原因；只有在用户同意或连续失败阻塞时，才允许改用新 session，并必须把新的 session id 写回本文件和 `CLAUDE.md`。
+- Claude Code 可以使用 Superpowers 插件作为开发流程辅助，但 Superpowers 不是 `mico` 的运行时依赖，也不能作为扩大任务范围的理由。
+- 适合使用 Superpowers 的场景：复杂改造前任务分解、实现后自检、测试覆盖审查、代码审查和风险清单。
+- 不需要使用 Superpowers 的场景：简单小修、纯文档小改、已经明确的小范围实现。
 - Claude Code 每次任务应优先在 `mico/` 内完成，不跨目录改动。
 - Claude Code 输出后，Codex 必须复核：
   - 是否符合最小 demo 范围；
