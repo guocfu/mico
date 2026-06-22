@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 from mico.tools import run_tool
@@ -40,6 +42,41 @@ def test_workspace_blocks_path_escape(tmp_path):
 
     with pytest.raises(ValueError, match="escapes workspace"):
         workspace.path("../outside.txt")
+
+
+def test_workspace_blocks_symlink_escape(tmp_path):
+    outside = tmp_path.parent / f"{tmp_path.name}-outside.txt"
+    outside.write_text("secret", encoding="utf-8")
+    link = tmp_path / "link.txt"
+    try:
+        link.symlink_to(outside)
+    except OSError:
+        pytest.skip("symlink not supported on this platform")
+    workspace = Workspace.build(tmp_path)
+
+    with pytest.raises(ValueError, match="escapes workspace"):
+        workspace.path("link.txt")
+
+
+def test_workspace_allows_normal_path(tmp_path):
+    (tmp_path / "file.txt").write_text("hello", encoding="utf-8")
+    workspace = Workspace.build(tmp_path)
+
+    result = workspace.path("file.txt")
+
+    assert result == (tmp_path / "file.txt").resolve()
+
+
+def test_workspace_blocks_cross_drive_path(tmp_path, monkeypatch):
+    workspace = Workspace.build(tmp_path)
+
+    def fake_commonpath(paths):
+        raise ValueError("paths are on different drives")
+
+    monkeypatch.setattr(os.path, "commonpath", fake_commonpath)
+
+    with pytest.raises(ValueError, match="escapes workspace"):
+        workspace.path("file.txt")
 
 
 class TestPatchFile:

@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 
@@ -27,7 +28,11 @@ class Workspace:
 
     def path(self, value):
         candidate = (self.root / str(value)).resolve()
-        if candidate != self.root and self.root not in candidate.parents:
+        try:
+            common = os.path.commonpath([str(self.root), str(candidate)])
+        except ValueError:
+            raise ValueError(f"path escapes workspace: {value}") from None
+        if common != str(self.root):
             raise ValueError(f"path escapes workspace: {value}")
         return candidate
 
