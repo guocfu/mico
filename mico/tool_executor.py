@@ -1,8 +1,6 @@
 from dataclasses import dataclass, field
 
-from .tools import run_tool
-
-WRITE_TOOLS = {"patch_file"}
+from .tools import TOOL_SPECS, run_tool
 
 
 @dataclass(frozen=True)
@@ -17,7 +15,8 @@ class ToolExecutor:
         self.approval_policy = approval_policy
 
     def execute(self, name, args):
-        if name in WRITE_TOOLS and self.approval_policy == "never":
+        spec = TOOL_SPECS.get(name)
+        if spec and spec.risky and self.approval_policy == "never":
             return ToolResult(
                 content=f"error: tool {name} is not allowed under approval=never",
                 metadata={"approval_policy": self.approval_policy, "ok": False},

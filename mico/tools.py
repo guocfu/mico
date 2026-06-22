@@ -7,13 +7,14 @@ from dataclasses import dataclass
 class ToolSpec:
     description: str
     schema: str
+    risky: bool = False
 
 
 TOOL_SPECS = {
     "list_files": ToolSpec("List files in the workspace.", '{"path": "str=."}'),
     "read_file": ToolSpec("Read a UTF-8 file by line range.", '{"path": "str", "start": "int=1", "end": "int=80"}'),
     "search": ToolSpec("Search text in the workspace.", '{"pattern": "str", "path": "str=."}'),
-    "patch_file": ToolSpec("Exact text replacement in a file.", '{"path": "str", "old_text": "str", "new_text": "str"}'),
+    "patch_file": ToolSpec("Exact text replacement in a file.", '{"path": "str", "old_text": "str", "new_text": "str"}', risky=True),
 }
 
 

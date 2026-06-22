@@ -5,6 +5,17 @@ from mico.tool_executor import ToolExecutor
 from mico.workspace import Workspace
 
 
+def test_readonly_tool_allowed_under_approval_never(tmp_path):
+    (tmp_path / "notes.txt").write_text("hello mico\nbye\n", encoding="utf-8")
+    workspace = Workspace.build(tmp_path)
+    executor = ToolExecutor(workspace, approval_policy="never")
+
+    result = executor.execute("search", {"pattern": "mico", "path": "."})
+
+    assert result.metadata["ok"] is True
+    assert "mico" in result.content
+
+
 def test_agent_loop_runs_tool_and_returns_final(tmp_path):
     (tmp_path / "README.md").write_text("hello mico\n", encoding="utf-8")
     workspace = Workspace.build(tmp_path)

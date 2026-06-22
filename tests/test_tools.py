@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from mico.tools import run_tool
+from mico.tools import TOOL_SPECS, run_tool
 from mico.workspace import Workspace
 
 
@@ -77,6 +77,15 @@ def test_workspace_blocks_cross_drive_path(tmp_path, monkeypatch):
 
     with pytest.raises(ValueError, match="escapes workspace"):
         workspace.path("file.txt")
+
+
+def test_patch_file_is_risky():
+    assert TOOL_SPECS["patch_file"].risky is True
+
+
+@pytest.mark.parametrize("name", ["list_files", "read_file", "search"])
+def test_readonly_tools_are_not_risky(name):
+    assert TOOL_SPECS[name].risky is False
 
 
 class TestPatchFile:
