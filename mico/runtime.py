@@ -2,6 +2,7 @@ import json
 import re
 
 from .agent_loop import AgentLoop
+from .security import redact_artifact
 from .tool_executor import ToolExecutor
 
 
@@ -26,7 +27,7 @@ class Mico:
 
     def emit_trace(self, task_state, event_type, payload=None):
         event = {"event": event_type, "run_id": task_state.run_id, **dict(payload or {})}
-        self.run_store.append_trace(task_state, event)
+        self.run_store.append_trace(task_state, redact_artifact(event))
 
     @staticmethod
     def parse(raw):
@@ -69,8 +70,8 @@ class Mico:
         )
 
     def build_report(self, task_state):
-        return {
+        return redact_artifact({
             "task_state": task_state.to_dict(),
             "history_items": len(self.history),
             "workspace_root": str(self.workspace.root),
-        }
+        })

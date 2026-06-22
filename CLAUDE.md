@@ -49,6 +49,7 @@
 
 - 只在 `mico/` 仓库内工作。
 - 不要修改父目录的参考项目。
+- 如需建议 git commit 信息，必须使用中文说明，并保留 Conventional Commits 类型前缀，例如 `refactor: 使用 risky 元数据统一工具审批`。
 - 可以使用 Superpowers 插件辅助复杂任务的分解、自检和代码审查，但不要把 Superpowers 当作 `mico` 的运行依赖，也不要因此扩大任务范围。
 - 简单小修、纯文档小改、范围已经明确的实现，不需要刻意使用 Superpowers。
 - 修改前先理解现有代码和测试。

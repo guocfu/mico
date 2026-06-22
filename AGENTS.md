@@ -4,6 +4,7 @@
 
 - 始终使用简体中文回复。
 - `mico` 是一个独立 git 仓库；所有 git 操作都必须在 `mico/` 目录内执行。
+- 以后建议 git commit 信息必须使用中文说明，并保留 Conventional Commits 类型前缀，例如 `feat: 增加安全补丁工具`、`fix: 加固工作区路径校验`。
 - 当前阶段目标是先做一个小的 coding agent demo，可以本地跑通。
 - 严格控制范围：先跑通最小闭环，再逐步借鉴 `pico`、`learn-claude-code-main`、`nanobot-main`。
 
