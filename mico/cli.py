@@ -1,6 +1,6 @@
 import argparse
 
-from .providers import FakeModelClient
+from .providers import FakeModelClient, OpenAICompatibleModelClient
 from .runtime import Mico
 from .state import RunStore
 from .workspace import Workspace
@@ -17,13 +17,50 @@ def build_arg_parser():
         default="auto",
         help="Reserved for future write tools.",
     )
+    parser.add_argument(
+        "--provider",
+        choices=("fake", "openai-compatible"),
+        default="fake",
+        help="Model provider (default: fake).",
+    )
+    parser.add_argument("--model", default="", help="Model name (required for openai-compatible).")
+    parser.add_argument("--base-url", default="", help="API base URL (required for openai-compatible).")
+    parser.add_argument(
+        "--api-key-env",
+        default="MICO_API_KEY",
+        help="Environment variable name for API key (default: MICO_API_KEY).",
+    )
+    parser.add_argument(
+        "--model-timeout",
+        type=int,
+        default=120,
+        help="HTTP timeout in seconds for model requests (default: 120).",
+    )
     return parser
 
 
 def build_agent(args):
     workspace = Workspace.build(args.cwd)
+    if args.provider == "fake":
+        model_client = FakeModelClient()
+    elif args.provider == "openai-compatible":
+        if not args.base_url:
+            raise SystemExit("--base-url is required for openai-compatible provider")
+        if not args.model:
+            raise SystemExit("--model is required for openai-compatible provider")
+        try:
+            model_client = OpenAICompatibleModelClient.from_env(
+                base_url=args.base_url,
+                model=args.model,
+                api_key_env=args.api_key_env,
+                timeout=args.model_timeout,
+            )
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from None
+    else:
+        raise SystemExit(f"unknown provider: {args.provider}")
     return Mico(
-        model_client=FakeModelClient(),
+        model_client=model_client,
         workspace=workspace,
         run_store=RunStore(workspace.root / ".mico" / "runs"),
         approval_policy=args.approval,
