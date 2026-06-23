@@ -53,6 +53,19 @@ Supported tools:
 
 All paths are sandboxed inside the workspace. `patch_file` requires `old_text` to appear exactly once in the target file.
 
+## Live Smoke (optional, real model)
+
+An optional smoke runner that validates the real OpenAI-compatible provider end-to-end with read-only tools. It is **not** part of the default test suite and requires a working model endpoint.
+
+1. Copy `.env.example` to `.env` and fill in `MICO_API_KEY`, `MICO_BASE_URL`, `MICO_MODEL`.
+2. Run:
+
+```bash
+python -m benchmarks.live
+```
+
+The runner creates a temporary workspace, executes three read-only cases (`list_files`, `read_file`, `search`), and writes a summary to `benchmarks/results/live-latest.json`. No prompts, raw model output, or API keys are recorded in the results.
+
 ## Test
 
 ```bash
