@@ -1,7 +1,5 @@
-import json
-import re
-
 from .agent_loop import AgentLoop
+from .parser import ModelOutputParser
 from .prompt import PromptBuilder
 from .security import redact_artifact
 from .tool_executor import ToolExecutor
@@ -18,9 +16,12 @@ class Mico:
         self.tool_executor = ToolExecutor(workspace, approval_policy=approval_policy)
         self._prompt_builder = PromptBuilder()
         self._last_prompt_metadata = None
+        self._model_output_parser = ModelOutputParser()
+        self._last_parser_error_kind = None
 
     def ask(self, user_message):
         self.tool_executor.reset_run_state()
+        self._last_parser_error_kind = None
         return AgentLoop(self).run(user_message)
 
     def record(self, item):
@@ -35,20 +36,16 @@ class Mico:
 
     @staticmethod
     def parse(raw):
-        text = str(raw or "")
-        tool_match = re.search(r"<tool>(.*?)</tool>", text, re.DOTALL)
-        if tool_match:
-            try:
-                return "tool", json.loads(tool_match.group(1).strip())
-            except json.JSONDecodeError as exc:
-                return "retry", f"model returned malformed tool JSON: {exc}"
-        final_match = re.search(r"<final>(.*?)</final>", text, re.DOTALL)
-        if final_match:
-            final = final_match.group(1).strip()
-            if final:
-                return "final", final
-            return "retry", "model returned an empty final answer"
-        return "retry", "model returned neither <tool> nor <final>"
+        parsed = ModelOutputParser().parse(raw)
+        return parsed.kind, parsed.payload
+
+    def parse_output(self, raw):
+        parsed = self._model_output_parser.parse(raw)
+        if parsed.kind == "retry":
+            self._last_parser_error_kind = parsed.error_kind
+        else:
+            self._last_parser_error_kind = None
+        return parsed
 
     def build_prompt(self, user_message):
         return self.build_prompt_bundle(user_message).text
@@ -88,6 +85,8 @@ class Mico:
         }
         if self._last_prompt_metadata is not None:
             report["prompt_metadata"] = self._last_prompt_metadata
+        if self._last_parser_error_kind is not None:
+            report["parser_error_kind"] = self._last_parser_error_kind
         return redact_artifact(report)
 
     @staticmethod

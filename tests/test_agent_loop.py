@@ -823,3 +823,131 @@ def test_report_preserves_existing_fields_with_prompt_metadata(tmp_path):
     assert "prompt_metadata" in report
     assert report["prompt_metadata"]["approval_policy"] == "never"
     assert report["prompt_metadata"]["restricted_tool_count"] == 1
+
+
+def test_model_parsed_trace_has_error_kind_on_retry(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient(["not xml", "<final>done</final>"]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    agent.ask("hello")
+
+    events = _trace_events(tmp_path / ".mico" / "runs")
+    parsed_events = [e for e in events if e["event"] == "model_parsed"]
+    assert len(parsed_events) >= 2
+    retry_event = parsed_events[0]
+    assert retry_event["kind"] == "retry"
+    assert retry_event["error_kind"] == "unknown_block"
+    final_event = parsed_events[1]
+    assert final_event["kind"] == "final"
+    assert "error_kind" not in final_event
+
+
+def test_model_parsed_trace_error_kind_malformed_tool_json(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient(["<tool>{bad</tool>", "<final>done</final>"]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    agent.ask("hello")
+
+    events = _trace_events(tmp_path / ".mico" / "runs")
+    parsed_events = [e for e in events if e["event"] == "model_parsed"]
+    retry_event = parsed_events[0]
+    assert retry_event["kind"] == "retry"
+    assert retry_event["error_kind"] == "malformed_tool_json"
+
+
+def test_model_parsed_trace_error_kind_empty_final(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient(["<final>  </final>", "<final>done</final>"]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    agent.ask("hello")
+
+    events = _trace_events(tmp_path / ".mico" / "runs")
+    parsed_events = [e for e in events if e["event"] == "model_parsed"]
+    retry_event = parsed_events[0]
+    assert retry_event["kind"] == "retry"
+    assert retry_event["error_kind"] == "empty_final"
+
+
+def test_retry_limit_report_has_parser_error_kind(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient(["bad1", "bad2", "bad3", "bad4"]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+        max_steps=1,
+    )
+
+    agent.ask("hello")
+
+    run_dirs = list((tmp_path / ".mico" / "runs").iterdir())
+    report = json.loads((run_dirs[0] / "report.json").read_text(encoding="utf-8"))
+    assert report["failure_category"] == "malformed_model_output"
+    assert "parser_error_kind" in report
+    assert report["parser_error_kind"] == "unknown_block"
+
+
+def test_report_parser_error_kind_not_present_on_success(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient(["<final>ok</final>"]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    agent.ask("hello")
+
+    run_dirs = list((tmp_path / ".mico" / "runs").iterdir())
+    report = json.loads((run_dirs[0] / "report.json").read_text(encoding="utf-8"))
+    assert "parser_error_kind" not in report
+
+
+def test_parser_error_kind_resets_between_asks(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient(["bad1", "bad2", "bad3", "bad4", "<final>ok</final>"]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+        max_steps=1,
+    )
+
+    first = agent.ask("first")
+    second = agent.ask("second")
+
+    assert first == "Stopped after too many malformed model responses."
+    assert second == "ok"
+    reports = [
+        json.loads((run_dir / "report.json").read_text(encoding="utf-8"))
+        for run_dir in (tmp_path / ".mico" / "runs").iterdir()
+    ]
+    retry_report = next(report for report in reports if report["task_state"]["stop_reason"] == "retry_limit")
+    success_report = next(report for report in reports if report["task_state"]["stop_reason"] == "final")
+    assert retry_report["parser_error_kind"] == "unknown_block"
+    assert "parser_error_kind" not in success_report
+
+
+def test_report_does_not_contain_raw_model_output(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    raw_text = "RAW_MODEL_OUTPUT_SECRET_12345"
+    agent = Mico(
+        model_client=FakeModelClient([raw_text, "<final>done</final>"]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    agent.ask("hello")
+
+    run_dirs = list((tmp_path / ".mico" / "runs").iterdir())
+    report_text = (run_dirs[0] / "report.json").read_text(encoding="utf-8")
+    assert raw_text not in report_text

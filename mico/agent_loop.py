@@ -55,8 +55,12 @@ class AgentLoop:
                 )
                 agent.run_store.write_report(task_state, agent.build_report(task_state))
                 return final
-            kind, payload = agent.parse(raw)
-            agent.emit_trace(task_state, "model_parsed", {"kind": kind})
+            parsed = agent.parse_output(raw)
+            kind, payload = parsed.kind, parsed.payload
+            trace_payload = {"kind": kind}
+            if kind == "retry" and parsed.error_kind is not None:
+                trace_payload["error_kind"] = parsed.error_kind
+            agent.emit_trace(task_state, "model_parsed", trace_payload)
 
             if kind == "tool":
                 name = payload.get("name", "")
