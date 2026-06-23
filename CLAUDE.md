@@ -3,7 +3,8 @@
 ## 启动时先做
 
 - 先阅读同目录 `AGENTS.md`，再阅读本文件。
-- 如需恢复上下文，继续阅读 `analysis/mico-improvement-framework.md`。
+- 如需恢复上下文，继续阅读 `analysis/mico-resume-project-roadmap.md`。
+- `analysis/mico-improvement-framework.md` 保留为历史技术分析；除非 Codex 明确要求，不再作为后续主执行路线。
 - 开始实现前先查看 `git status --short` 和相关 `git diff`，不要覆盖用户或 Codex 已有改动。
 - 不要主动全量分析父目录参考项目；只有 Codex 明确要求时才按指定项目阅读。
 
@@ -17,7 +18,8 @@
 
 ## 当前项目状态
 
-- `mico` 是一个小型本地 coding agent demo。
+- `mico` 是一个面向简历项目化迭代的本地 coding agent harness。
+- 当前主路线见 `analysis/mico-resume-project-roadmap.md`，目标是形成可演示、可测试、可复盘、可量化的 Verified Coding Agent Harness。
 - 默认 provider 是 `FakeModelClient`，可选真实模型 provider 是 `openai-compatible`。
 - 核心闭环已经存在：
   - CLI 接收任务；
@@ -50,11 +52,11 @@
 - shell 工具。
 - git 自动提交。
 - 交互式 REPL。
-- 长期记忆。
 - 多 agent。
 - 复杂权限 UI。
-- 上下文压缩。
 - 后台任务、任务队列或 Web UI。
+
+说明：会话内结构化记忆、上下文治理、checkpoint/resume 属于路线文档中的后续阶段，不等同于长期知识库或复杂产品化能力；只有 Codex 明确指定阶段任务时才实现。
 
 ## 工作方式
 
@@ -86,4 +88,5 @@ python -m mico "列出当前目录"
 
 - `analysis/pico-security-and-tools.md`：pico 安全与工具执行层迁移分析。
 - `analysis/pico-author-notes.md`：pico 作者笔记、项目定位与 mico 演进方向。
-- `analysis/mico-improvement-framework.md`：基于 pico 与 claude-code 结论重构的 mico 改进框架。
+- `analysis/mico-resume-project-roadmap.md`：后续主执行路线，围绕简历项目化、指标生产线、工具治理、验证闭环、上下文治理、结构化记忆和恢复机制推进。
+- `analysis/mico-improvement-framework.md`：历史技术分析，保留作为参考，不再作为主执行路线。

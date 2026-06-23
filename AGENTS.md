@@ -4,7 +4,7 @@
 
 - 本文件只记录 `mico` 子仓库的差异化规则；全局协作规则见父目录 `../AGENTS.md`。
 - `mico` 是一个独立 git 仓库；所有 git 命令都必须在 `mico/` 目录内执行。
-- 当前目标是先做一个小而完整、可本地跑通的 coding agent demo。
+- 当前目标是把 `mico` 尽快迭代成可写进简历、可面试深挖、可复现实验指标的本地 coding agent harness。
 - git commit 信息建议使用中文说明，并保留 Conventional Commits 类型前缀，例如 `feat: 增加安全补丁工具`。
 
 ## 当前实现边界
@@ -29,6 +29,7 @@
 - 不做 git 自动提交。
 - 不做交互式 REPL、Web UI、后台任务或任务队列。
 - 不做长期记忆、多 agent、复杂权限 UI 或上下文压缩。
+- 以上暂不实现范围以 `analysis/mico-resume-project-roadmap.md` 的阶段边界为准；只有路线文档和 Codex 明确指定阶段任务时，才实现会话内结构化记忆、上下文治理或 checkpoint/resume。
 
 ## 参考项目使用
 
@@ -42,7 +43,8 @@
 - Codex 负责任务边界、范围控制、架构审查、测试验收和最终接受。
 - Codex 调用 Claude Code 时必须给出明确、可执行、范围有限的任务。
 - 不要把本机 Claude Code session id、固定 resume 命令或一次性运行句柄写入仓库文件；这类信息属于本地运行态。
-- 如果需要从新会话继续，先阅读本文件、`CLAUDE.md`、`analysis/mico-improvement-framework.md`，再查看 `git status --short` 和 `git diff`。
+- 如果需要从新会话继续，先阅读本文件、`CLAUDE.md`、`analysis/mico-resume-project-roadmap.md`，再查看 `git status --short` 和 `git diff`。
+- `analysis/mico-improvement-framework.md` 保留为历史技术分析，不再作为后续主执行路线。
 
 ## 验收
 
