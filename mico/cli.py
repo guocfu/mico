@@ -1,5 +1,8 @@
 import argparse
+import os
+from pathlib import Path
 
+from .dotenv import load_dotenv
 from .providers import FakeModelClient, OpenAICompatibleModelClient
 from .runtime import Mico
 from .state import RunStore
@@ -20,11 +23,11 @@ def build_arg_parser():
     parser.add_argument(
         "--provider",
         choices=("fake", "openai-compatible"),
-        default="fake",
-        help="Model provider (default: fake).",
+        default=None,
+        help="Model provider. Auto-detected from env when all three configs are present.",
     )
-    parser.add_argument("--model", default="", help="Model name (required for openai-compatible).")
-    parser.add_argument("--base-url", default="", help="API base URL (required for openai-compatible).")
+    parser.add_argument("--model", default=None, help="Model name (required for openai-compatible).")
+    parser.add_argument("--base-url", default=None, help="API base URL (required for openai-compatible).")
     parser.add_argument(
         "--api-key-env",
         default="MICO_API_KEY",
@@ -39,26 +42,59 @@ def build_arg_parser():
     return parser
 
 
+def _resolve_config(args):
+    """Resolve final configuration from CLI args > system env > .env.
+
+    Returns (provider, base_url, model, api_key_env) with all gaps filled.
+    Assumes load_dotenv() has already been called so .env values are in os.environ.
+    """
+    provider = args.provider
+    api_key_env = args.api_key_env
+    base_url = args.base_url
+    model = args.model
+
+    # Fill base_url: CLI > system env > .env (already in os.environ)
+    if base_url is None:
+        base_url = os.environ.get("MICO_BASE_URL", "")
+
+    # Fill model: CLI > system env > .env (already in os.environ)
+    if model is None:
+        model = os.environ.get("MICO_MODEL", "")
+
+    # Check if API key is available
+    has_api_key = bool(os.environ.get(api_key_env))
+
+    # Auto-detect provider when not explicitly set
+    if provider is None:
+        if has_api_key and base_url and model:
+            provider = "openai-compatible"
+        else:
+            provider = "fake"
+
+    return provider, base_url, model, api_key_env
+
+
 def build_agent(args):
+    provider, base_url, model, api_key_env = _resolve_config(args)
     workspace = Workspace.build(args.cwd)
-    if args.provider == "fake":
+    if provider == "fake":
         model_client = FakeModelClient()
-    elif args.provider == "openai-compatible":
-        if not args.base_url:
+    elif provider == "openai-compatible":
+        if not base_url:
             raise SystemExit("--base-url is required for openai-compatible provider")
-        if not args.model:
+        if not model:
             raise SystemExit("--model is required for openai-compatible provider")
         try:
             model_client = OpenAICompatibleModelClient.from_env(
-                base_url=args.base_url,
-                model=args.model,
-                api_key_env=args.api_key_env,
+                base_url=base_url,
+                model=model,
+                api_key_env=api_key_env,
                 timeout=args.model_timeout,
             )
         except ValueError as exc:
             raise SystemExit(str(exc)) from None
     else:
-        raise SystemExit(f"unknown provider: {args.provider}")
+        raise SystemExit(f"unknown provider: {provider}")
     return Mico(
         model_client=model_client,
         workspace=workspace,
@@ -69,6 +105,7 @@ def build_agent(args):
 
 
 def main(argv=None):
+    load_dotenv(Path.cwd())
     args = build_arg_parser().parse_args(argv)
     prompt = " ".join(args.prompt).strip()
     if not prompt:

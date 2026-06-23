@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from mico.cli import build_arg_parser, build_agent
+from mico.cli import _resolve_config, build_arg_parser, build_agent
 from mico.providers import FakeModelClient, OpenAICompatibleModelClient
 
 
@@ -89,12 +89,17 @@ class TestOpenAICompatibleModelClient:
 
 
 class TestCLIProviderArgs:
-    def test_default_provider_is_fake(self):
+    def test_default_provider_resolves_to_fake(self, monkeypatch):
+        monkeypatch.delenv("MICO_API_KEY", raising=False)
+        monkeypatch.delenv("MICO_BASE_URL", raising=False)
+        monkeypatch.delenv("MICO_MODEL", raising=False)
         parser = build_arg_parser()
         args = parser.parse_args(["hello"])
-        assert args.provider == "fake"
-        assert args.model == ""
-        assert args.base_url == ""
+        assert args.provider is None
+        provider, base_url, model, _ = _resolve_config(args)
+        assert provider == "fake"
+        assert model == ""
+        assert base_url == ""
         assert args.api_key_env == "MICO_API_KEY"
         assert args.model_timeout == 120
 
@@ -114,7 +119,10 @@ class TestCLIProviderArgs:
         assert args.api_key_env == "MY_KEY"
         assert args.model_timeout == 30
 
-    def test_build_agent_default_fake(self, tmp_path):
+    def test_build_agent_default_fake(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("MICO_API_KEY", raising=False)
+        monkeypatch.delenv("MICO_BASE_URL", raising=False)
+        monkeypatch.delenv("MICO_MODEL", raising=False)
         args = build_arg_parser().parse_args(["--cwd", str(tmp_path), "hello"])
         agent = build_agent(args)
         assert isinstance(agent.model_client, FakeModelClient)
@@ -147,6 +155,8 @@ class TestCLIProviderArgs:
 
     def test_build_agent_openai_missing_base_url(self, tmp_path, monkeypatch):
         monkeypatch.setenv("MICO_API_KEY", "sk-test")
+        monkeypatch.delenv("MICO_BASE_URL", raising=False)
+        monkeypatch.delenv("MICO_MODEL", raising=False)
         args = build_arg_parser().parse_args([
             "--cwd", str(tmp_path),
             "--provider", "openai-compatible",
@@ -158,6 +168,8 @@ class TestCLIProviderArgs:
 
     def test_build_agent_openai_missing_model(self, tmp_path, monkeypatch):
         monkeypatch.setenv("MICO_API_KEY", "sk-test")
+        monkeypatch.delenv("MICO_BASE_URL", raising=False)
+        monkeypatch.delenv("MICO_MODEL", raising=False)
         args = build_arg_parser().parse_args([
             "--cwd", str(tmp_path),
             "--provider", "openai-compatible",
@@ -169,6 +181,8 @@ class TestCLIProviderArgs:
 
     def test_build_agent_openai_missing_api_key(self, tmp_path, monkeypatch):
         monkeypatch.delenv("MICO_API_KEY", raising=False)
+        monkeypatch.delenv("MICO_BASE_URL", raising=False)
+        monkeypatch.delenv("MICO_MODEL", raising=False)
         args = build_arg_parser().parse_args([
             "--cwd", str(tmp_path),
             "--provider", "openai-compatible",

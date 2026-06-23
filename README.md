@@ -32,6 +32,16 @@ python -m mico --provider openai-compatible --base-url http://localhost:8000/v1 
 
 You can also use `--api-key-env` to read from a different environment variable, and `--model-timeout` to adjust the HTTP timeout (default 120s).
 
+For repeated local smoke tests, copy `.env.example` to `.env` and fill in:
+
+```env
+MICO_API_KEY=sk-...
+MICO_BASE_URL=http://localhost:8000/v1
+MICO_MODEL=gpt-4
+```
+
+When all three values are present, `python -m mico "list this workspace"` automatically uses the OpenAI-compatible provider. CLI flags still take precedence, and `--provider fake` forces the fake provider. `.env` is ignored by git and should not be committed.
+
 ## Tools
 
 Supported tools:

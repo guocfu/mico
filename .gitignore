@@ -6,3 +6,4 @@ __pycache__/
 .claude/
 blog/
 benchmarks/results/
+.env
