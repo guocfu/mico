@@ -1,6 +1,7 @@
 import time
 
 from .state import TaskState, now
+from .tools import TOOL_SPECS
 from .workspace import clip, clip_artifact
 
 
@@ -61,12 +62,14 @@ class AgentLoop:
                     break
                 result = agent.execute_tool(name, args)
                 task_state.record_tool(name)
+                spec = TOOL_SPECS.get(name)
+                max_chars = spec.max_result_chars if spec else 4000
                 agent.record(
                     {
                         "role": "tool",
                         "name": name,
                         "args": args,
-                        "content": result.content,
+                        "content": clip(result.content, max_chars),
                         "metadata": dict(result.metadata),
                         "created_at": now(),
                     }

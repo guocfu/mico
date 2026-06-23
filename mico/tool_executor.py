@@ -77,7 +77,6 @@ class ToolExecutor:
                 metadata={**metadata, "ok": False, "repeated_call": True, "error_kind": "repeated_call"},
             )
 
-        self._last_tool_signature = signature
         if spec.requires_approval and self.approval_policy == "never":
             return ToolResult(
                 content=f"error: tool {name} is not allowed under approval=never",
@@ -91,6 +90,7 @@ class ToolExecutor:
                 content=f"error: {exc}",
                 metadata={**metadata, "ok": False, "error_kind": "validation_error"},
             )
+        self._last_tool_signature = signature
         return ToolResult(
             content=content,
             metadata={**metadata, "ok": True, "error_kind": "ok"},

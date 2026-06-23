@@ -657,3 +657,81 @@ def test_run_store_write_json_is_parseable(tmp_path):
     assert loaded == payload
     # tmp file should not remain
     assert not path.with_suffix(".json.tmp").exists()
+
+
+def test_approval_denied_then_same_call_still_denied(tmp_path):
+    (tmp_path / "code.py").write_text("old\n", encoding="utf-8")
+    workspace = Workspace.build(tmp_path)
+    executor = ToolExecutor(workspace, approval_policy="never")
+    args = {"path": "code.py", "old_text": "old", "new_text": "new"}
+
+    first = executor.execute("patch_file", args)
+    second = executor.execute("patch_file", args)
+
+    assert first.metadata["error_kind"] == "approval_denied"
+    assert first.metadata["blocked_by_approval"] is True
+    assert second.metadata["error_kind"] == "approval_denied"
+    assert second.metadata["blocked_by_approval"] is True
+
+
+def test_validation_error_then_valid_call_not_repeated(tmp_path):
+    (tmp_path / "notes.txt").write_text("hello\n", encoding="utf-8")
+    workspace = Workspace.build(tmp_path)
+    executor = ToolExecutor(workspace, approval_policy="auto")
+
+    bad = executor.execute("read_file", {"start": 1, "end": 2})
+    good = executor.execute("read_file", {"path": "notes.txt", "start": 1, "end": 2})
+
+    assert bad.metadata["error_kind"] == "validation_error"
+    assert good.metadata["error_kind"] == "ok"
+    assert good.metadata["ok"] is True
+
+
+def test_execution_validation_error_then_same_call_not_repeated(tmp_path):
+    (tmp_path / "code.py").write_text("hello\n", encoding="utf-8")
+    workspace = Workspace.build(tmp_path)
+    executor = ToolExecutor(workspace, approval_policy="auto")
+    args = {"path": "code.py", "old_text": "missing", "new_text": "x"}
+
+    first = executor.execute("patch_file", args)
+    second = executor.execute("patch_file", args)
+
+    assert first.metadata["error_kind"] == "validation_error"
+    assert second.metadata["error_kind"] == "validation_error"
+    assert second.metadata["repeated_call"] is False
+
+
+def test_success_then_same_call_is_repeated(tmp_path):
+    (tmp_path / "notes.txt").write_text("hello\n", encoding="utf-8")
+    workspace = Workspace.build(tmp_path)
+    executor = ToolExecutor(workspace, approval_policy="auto")
+    args = {"path": "notes.txt", "start": 1, "end": 80}
+
+    first = executor.execute("read_file", args)
+    second = executor.execute("read_file", args)
+
+    assert first.metadata["error_kind"] == "ok"
+    assert second.metadata["error_kind"] == "repeated_call"
+    assert second.metadata["repeated_call"] is True
+
+
+def test_long_tool_result_clipped_in_history(tmp_path):
+    long_content = "x" * 5000
+    (tmp_path / "big.txt").write_text(long_content + "\n", encoding="utf-8")
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"read_file","args":{"path":"big.txt","start":1,"end":1}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    answer = agent.ask("read big file")
+
+    assert answer == "done"
+    tool_entry = agent.history[1]
+    assert tool_entry["role"] == "tool"
+    assert len(tool_entry["content"]) <= 4000
+    assert tool_entry["content"].endswith("...")
