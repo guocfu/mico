@@ -30,8 +30,12 @@ class AgentLoop:
         while task_state.attempts < max_attempts:
             task_state.record_attempt()
             agent.run_store.write_task_state(task_state)
-            prompt = agent.build_prompt(user_message)
-            agent.emit_trace(task_state, "model_requested", {"attempts": task_state.attempts})
+            bundle = agent.build_prompt_bundle(user_message)
+            prompt = bundle.text
+            agent.emit_trace(task_state, "model_requested", {
+                "attempts": task_state.attempts,
+                "prompt_metadata": bundle.metadata,
+            })
             try:
                 raw = agent.model_client.complete(prompt)
             except Exception as exc:

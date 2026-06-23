@@ -735,3 +735,91 @@ def test_long_tool_result_clipped_in_history(tmp_path):
     assert tool_entry["role"] == "tool"
     assert len(tool_entry["content"]) <= 4000
     assert tool_entry["content"].endswith("...")
+
+
+def test_model_requested_trace_has_prompt_metadata(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient(["<final>ok</final>"]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    agent.ask("hello")
+
+    events = _trace_events(tmp_path / ".mico" / "runs")
+    requested = [e for e in events if e["event"] == "model_requested"]
+    assert len(requested) >= 1
+    event = requested[0]
+    assert "prompt_metadata" in event
+    meta = event["prompt_metadata"]
+    assert "prompt_chars" in meta
+    assert "history_items_total" in meta
+    assert "history_items_used" in meta
+    assert "tool_count" in meta
+    assert "restricted_tool_count" in meta
+    assert "approval_policy" in meta
+    assert "current_request_chars" in meta
+    assert isinstance(meta["prompt_chars"], int)
+    assert meta["prompt_chars"] > 0
+
+
+def test_model_requested_trace_does_not_contain_full_prompt(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient(["<final>ok</final>"]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    agent.ask("this is a unique request xyz789")
+
+    events = _trace_events(tmp_path / ".mico" / "runs")
+    requested = [e for e in events if e["event"] == "model_requested"]
+    assert len(requested) >= 1
+    event_json = json.dumps(requested[0])
+    assert "this is a unique request xyz789" not in event_json
+    assert "You are mico" not in event_json
+
+
+def test_report_has_prompt_metadata(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient(["<final>ok</final>"]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    agent.ask("hello")
+
+    run_dirs = list((tmp_path / ".mico" / "runs").iterdir())
+    report = json.loads((run_dirs[0] / "report.json").read_text(encoding="utf-8"))
+    assert "prompt_metadata" in report
+    meta = report["prompt_metadata"]
+    assert "prompt_chars" in meta
+    assert "tool_count" in meta
+    assert "approval_policy" in meta
+
+
+def test_report_preserves_existing_fields_with_prompt_metadata(tmp_path):
+    (tmp_path / "code.py").write_text("hello\n", encoding="utf-8")
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"patch_file","args":{"path":"code.py","old_text":"hello","new_text":"x"}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+        approval_policy="never",
+    )
+
+    agent.ask("fix code")
+
+    run_dirs = list((tmp_path / ".mico" / "runs").iterdir())
+    report = json.loads((run_dirs[0] / "report.json").read_text(encoding="utf-8"))
+    assert report["artifacts_version"] == "1"
+    assert report["failure_category"] == "success"
+    assert "prompt_metadata" in report
+    assert report["prompt_metadata"]["approval_policy"] == "never"
+    assert report["prompt_metadata"]["restricted_tool_count"] == 1
