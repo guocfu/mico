@@ -1,0 +1,148 @@
+[
+  {
+    "name": "list_files_success",
+    "description": "list_files returns workspace contents",
+    "fake_outputs": [
+      "<tool>{\"name\":\"list_files\",\"args\":{\"path\":\".\"}}</tool>",
+      "<final>listed files</final>"
+    ],
+    "workspace_setup": [
+      {"path": "hello.txt", "content": "hello world\n"}
+    ],
+    "assertions": {
+      "stop_reason": "final",
+      "failure_category": "success",
+      "tools_used": ["list_files"],
+      "tool_call_summary": {"ok": 1},
+      "history_contains": ["hello.txt"],
+      "raw_model_outputs_absent_from_report": true
+    }
+  },
+  {
+    "name": "read_file_success",
+    "description": "read_file returns file content",
+    "fake_outputs": [
+      "<tool>{\"name\":\"read_file\",\"args\":{\"path\":\"hello.txt\"}}</tool>",
+      "<final>read done</final>"
+    ],
+    "workspace_setup": [
+      {"path": "hello.txt", "content": "hello world\n"}
+    ],
+    "assertions": {
+      "stop_reason": "final",
+      "failure_category": "success",
+      "tools_used": ["read_file"],
+      "tool_call_summary": {"ok": 1},
+      "history_contains": ["hello world"],
+      "raw_model_outputs_absent_from_report": true
+    }
+  },
+  {
+    "name": "search_success",
+    "description": "search finds matching text",
+    "fake_outputs": [
+      "<tool>{\"name\":\"search\",\"args\":{\"pattern\":\"needle\"}}</tool>",
+      "<final>search done</final>"
+    ],
+    "workspace_setup": [
+      {"path": "haystack.txt", "content": "line one\nneedle here\nline three\n"}
+    ],
+    "assertions": {
+      "stop_reason": "final",
+      "failure_category": "success",
+      "tools_used": ["search"],
+      "tool_call_summary": {"ok": 1},
+      "history_contains": ["needle here"],
+      "raw_model_outputs_absent_from_report": true
+    }
+  },
+  {
+    "name": "patch_file_success",
+    "description": "patch_file replaces text and returns success",
+    "fake_outputs": [
+      "<tool>{\"name\":\"patch_file\",\"args\":{\"path\":\"code.py\",\"old_text\":\"old\",\"new_text\":\"new\"}}</tool>",
+      "<final>patched</final>"
+    ],
+    "workspace_setup": [
+      {"path": "code.py", "content": "old content\n"}
+    ],
+    "assertions": {
+      "stop_reason": "final",
+      "failure_category": "success",
+      "tools_used": ["patch_file"],
+      "tool_call_summary": {"ok": 1},
+      "file_contents": {"code.py": "new content\n"},
+      "raw_model_outputs_absent_from_report": true
+    }
+  },
+  {
+    "name": "patch_file_denied",
+    "description": "patch_file rejected under approval=never",
+    "approval_policy": "never",
+    "fake_outputs": [
+      "<tool>{\"name\":\"patch_file\",\"args\":{\"path\":\"code.py\",\"old_text\":\"old\",\"new_text\":\"new\"}}</tool>",
+      "<final>could not patch</final>"
+    ],
+    "workspace_setup": [
+      {"path": "code.py", "content": "old content\n"}
+    ],
+    "assertions": {
+      "stop_reason": "final",
+      "failure_category": "success",
+      "tools_used": ["patch_file"],
+      "tool_call_summary": {"approval_denied": 1},
+      "history_contains": ["approval=never"],
+      "file_contents": {"code.py": "old content\n"},
+      "raw_model_outputs_absent_from_report": true
+    }
+  },
+  {
+    "name": "path_escape_rejected",
+    "description": "path escaping workspace is rejected",
+    "fake_outputs": [
+      "<tool>{\"name\":\"read_file\",\"args\":{\"path\":\"../../etc/passwd\"}}</tool>",
+      "<final>could not read</final>"
+    ],
+    "workspace_setup": [],
+    "assertions": {
+      "stop_reason": "final",
+      "failure_category": "success",
+      "tools_used": ["read_file"],
+      "tool_call_summary": {"validation_error": 1},
+      "history_contains": ["path escapes workspace"],
+      "raw_model_outputs_absent_from_report": true
+    }
+  },
+  {
+    "name": "malformed_retry_then_success",
+    "description": "malformed model output retried, then succeeds",
+    "fake_outputs": [
+      "not xml at all",
+      "<tool>{\"name\":\"list_files\",\"args\":{\"path\":\".\"}}</tool>",
+      "<final>recovered</final>"
+    ],
+    "workspace_setup": [
+      {"path": "hello.txt", "content": "hello world\n"}
+    ],
+    "assertions": {
+      "stop_reason": "final",
+      "failure_category": "success",
+      "tools_used": ["list_files"],
+      "tool_call_summary": {"ok": 1},
+      "trace_retry_error_kinds": ["unknown_block"],
+      "report_absent_keys": ["parser_error_kind"],
+      "raw_model_outputs_absent_from_report": true
+    }
+  },
+  {
+    "name": "model_error_artifacts",
+    "description": "model error produces state, trace, and report artifacts",
+    "error_on_first": true,
+    "workspace_setup": [],
+    "assertions": {
+      "stop_reason": "model_error",
+      "failure_category": "model_error",
+      "tools_used": []
+    }
+  }
+]

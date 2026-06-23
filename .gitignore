@@ -5,3 +5,4 @@ __pycache__/
 .tmp/
 .claude/
 blog/
+benchmarks/results/
