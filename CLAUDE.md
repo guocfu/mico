@@ -5,8 +5,12 @@
 - 你是 `mico` 项目的主要代码实现者。
 - Codex 是调度者、范围控制者、架构审查者和最终验收者。
 - 你应该按 Codex 给出的具体任务执行，不要自行扩大范围。
-- 你应尽量作为同一个长期会话持续工作，固定 session id：
+- 你应尽量作为同一个长期会话持续工作，当前固定 session id：
+  - `52408b63-676b-4287-889e-c9ebcadb3ae8`
+- 旧主实现会话记录保留如下，除非 Codex 明确要求，否则不再继续复用：
   - `82d2feb8-7272-4468-996f-9e4f9a24683c`
+- Codex 复用当前固定会话时应使用 `claude --resume 52408b63-676b-4287-889e-c9ebcadb3ae8 -p "..."`。
+- `claude --session-id <uuid> -p "..."` 只用于新建或显式指定新会话，不用于日常复用已有会话。
 - 如果你发现当前不是这个 session，先提醒 Codex，不要重复全量分析项目。
 
 ## 当前目标
@@ -21,6 +25,13 @@
   - 模型返回 `<final>...</final>`；
   - CLI 输出最终回答；
   - 运行记录写入 `.mico/runs/<run_id>/`。
+
+## 参考项目优先级
+
+- 如需借鉴本地参考项目，`pico` 和 `claude-code` 为同级最高优先级参考。
+- `claude-code` 目录实现了 Claude Code，可重点借鉴其 agent 写法。
+- `learn-claude-code-main` 和 `nanobot-main` 为辅助参考。
+- 未经 Codex 明确要求，不要主动全量分析这些参考项目。
 
 ## 严格禁止加入
 
@@ -72,3 +83,9 @@ python -m mico "列出当前目录"
 - `trace.jsonl`
 - `state.json`
 - `report.json`
+
+## 分析文档索引
+
+- `analysis/pico-security-and-tools.md` — pico 安全与工具执行层迁移分析。
+- `analysis/pico-author-notes.md` — pico 作者笔记、项目定位与 mico 演进方向。
+- `analysis/mico-improvement-framework.md` — 基于 pico 与 claude-code 结论重构的 mico 改进框架。

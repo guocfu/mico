@@ -3,7 +3,7 @@ import re
 
 from .agent_loop import AgentLoop
 from .security import redact_artifact
-from .tool_executor import ToolExecutor, ToolResult
+from .tool_executor import ToolExecutor
 
 
 class Mico:
@@ -15,24 +15,15 @@ class Mico:
         self.max_steps = max_steps
         self.history = []
         self.tool_executor = ToolExecutor(workspace, approval_policy=approval_policy)
-        self._last_tool_signature = None
 
     def ask(self, user_message):
-        self._last_tool_signature = None
+        self.tool_executor.reset_run_state()
         return AgentLoop(self).run(user_message)
 
     def record(self, item):
         self.history.append(dict(item))
 
     def execute_tool(self, name, args):
-        args = args or {}
-        signature = name + "\0" + json.dumps(args, sort_keys=True, ensure_ascii=False)
-        if signature == self._last_tool_signature:
-            return ToolResult(
-                content=f"error: repeated identical tool call for {name}",
-                metadata={"approval_policy": self.approval_policy, "ok": False},
-            )
-        self._last_tool_signature = signature
         return self.tool_executor.execute(name, args)
 
     def emit_trace(self, task_state, event_type, payload=None):
@@ -66,22 +57,61 @@ class Mico:
             else:
                 history_lines.append(f"{role}: {content}")
         history = "\n".join(history_lines) or "(empty)"
+        tool_lines = []
+        for item in self.tool_executor.tool_catalog():
+            availability = "allowed" if item["allowed"] else "not allowed under approval=never"
+            approval_tag = "requires-approval" if item["requires_approval"] else "read-only"
+            tool_lines.append(
+                f"- {item['name']}: {item['description']} schema={item['schema']} [{approval_tag}; {availability}]"
+            )
+        tool_catalog = "\n".join(tool_lines)
         return (
             "You are mico, a tiny local coding agent.\n"
-            "Respond with exactly one of these XML blocks:\n"
-            '<tool>{"name":"list_files","args":{"path":"."}}</tool>\n'
-            '<tool>{"name":"read_file","args":{"path":"file","start":1,"end":80}}</tool>\n'
-            '<tool>{"name":"search","args":{"pattern":"text","path":"."}}</tool>\n'
-            '<tool>{"name":"patch_file","args":{"path":"file","old_text":"old","new_text":"new"}}</tool>\n'
+            "Respond with exactly one XML block per turn:\n"
+            '<tool>{"name":"tool_name","args":{}}</tool>\n'
             "<final>answer</final>\n\n"
+            f"Approval policy: {self.approval_policy}\n"
+            "Do not call tools that are not allowed under the current approval policy.\n"
+            f"Available tools:\n{tool_catalog}\n\n"
             f"Workspace: {self.workspace.root}\n"
             f"User request: {user_message}\n"
             f"Recent history:\n{history}\n"
         )
 
     def build_report(self, task_state):
+        tool_call_summary = {}
+        last_error_kind = None
+        for item in self.history:
+            if item.get("role") != "tool":
+                continue
+            error_kind = item.get("metadata", {}).get("error_kind", "unknown")
+            tool_call_summary[error_kind] = tool_call_summary.get(error_kind, 0) + 1
+            if error_kind != "ok":
+                last_error_kind = error_kind
+        available_tools = [item["name"] for item in self.tool_executor.tool_catalog() if item["allowed"]]
         return redact_artifact({
+            "artifacts_version": "1",
             "task_state": task_state.to_dict(),
+            "failure_category": self._failure_category(task_state, last_error_kind),
             "history_items": len(self.history),
             "workspace_root": str(self.workspace.root),
+            "approval_policy": self.approval_policy,
+            "available_tools": available_tools,
+            "restricted_tools": self.tool_executor.restricted_tools(),
+            "tool_call_summary": tool_call_summary,
         })
+
+    @staticmethod
+    def _failure_category(task_state, last_error_kind):
+        stop = task_state.stop_reason
+        if stop == "final":
+            return "success"
+        if stop == "step_limit":
+            return "step_limit"
+        if stop == "retry_limit":
+            return "malformed_model_output"
+        if stop == "model_error":
+            return "model_error"
+        if last_error_kind:
+            return last_error_kind
+        return "unknown"

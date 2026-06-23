@@ -6,7 +6,7 @@
 - `mico` 是一个独立 git 仓库；所有 git 操作都必须在 `mico/` 目录内执行。
 - 以后建议 git commit 信息必须使用中文说明，并保留 Conventional Commits 类型前缀，例如 `feat: 增加安全补丁工具`、`fix: 加固工作区路径校验`。
 - 当前阶段目标是先做一个小的 coding agent demo，可以本地跑通。
-- 严格控制范围：先跑通最小闭环，再逐步借鉴 `pico`、`learn-claude-code-main`、`nanobot-main`。
+- 严格控制范围：先跑通最小闭环，再逐步借鉴 `pico`、`claude-code`、`learn-claude-code-main`、`nanobot-main`。
 
 ## Codex 与 Claude Code 分工
 
@@ -59,17 +59,22 @@
 ## 对参考项目的使用
 
 - 不要在第一版实现前全量分析三个参考项目。
-- 第一版可以轻量参考 `pico/examples/mini-pico` 的模块拆分和最小 agent loop。
+- `pico` 和 `claude-code` 是当前最高优先级参考项目。
+- `claude-code` 目录实现了 Claude Code，可重点借鉴其 agent 写法。
+- 第一版可以轻量参考 `pico/examples/mini-pico` 的模块拆分和最小 agent loop，也可以按需参考 `claude-code` 的 agent 组织方式。
 - 需要借鉴其他项目时，由 Claude Code 分项目分析，并把结论写入对应项目的 `CLAUDE.md` 或分析文档。
 - Codex 负责把参考项目结论筛选后决定是否进入 `mico`。
 
 ## Claude Code 调用规则
 
 - Codex 调用 Claude Code 时，必须给出明确、可执行、范围有限的任务。
-- `mico` 主实现 Claude Code 会话必须固定复用同一个 session id：
+- `mico` 主实现 Claude Code 会话当前固定为：
+  - `52408b63-676b-4287-889e-c9ebcadb3ae8`
+- 旧主实现会话记录保留如下，除非用户明确要求，否则不再继续复用：
   - `82d2feb8-7272-4468-996f-9e4f9a24683c`
-- Codex 后续调用 Claude Code 处理 `mico` 主要实现任务时，必须使用：
-  - `claude --session-id 82d2feb8-7272-4468-996f-9e4f9a24683c -p "..."`
+- Codex 后续调用 Claude Code 处理 `mico` 的实现或审查任务时，复用已有固定会话必须使用：
+  - `claude --resume 52408b63-676b-4287-889e-c9ebcadb3ae8 -p "..."`
+- `claude --session-id <uuid> -p "..."` 只用于新建或显式指定新会话，不用于日常复用已有会话；对已有会话重复使用 `--session-id` 可能报 `Session ID ... is already in use`。
 - 除非用户明确要求更换会话，不要新建随机 Claude Code 会话来处理 `mico` 主要实现。
 - 如果固定 session 调用失败，Codex 应先报告失败原因；只有在用户同意或连续失败阻塞时，才允许改用新 session，并必须把新的 session id 写回本文件和 `CLAUDE.md`。
 - Claude Code 可以使用 Superpowers 插件作为开发流程辅助，但 Superpowers 不是 `mico` 的运行时依赖，也不能作为扩大任务范围的理由。

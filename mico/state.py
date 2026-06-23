@@ -53,6 +53,12 @@ class TaskState:
         self.final_answer = final_answer
         self.updated_at = now()
 
+    def stop_model_error(self, final_answer):
+        self.status = "stopped"
+        self.stop_reason = "model_error"
+        self.final_answer = final_answer
+        self.updated_at = now()
+
     def to_dict(self):
         return asdict(self)
 
@@ -83,4 +89,6 @@ class RunStore:
     @staticmethod
     def _write_json(path, payload):
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+        tmp.replace(path)

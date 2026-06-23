@@ -160,3 +160,9 @@ class TestReportRedaction:
         report = json.loads(report_path.read_text(encoding="utf-8"))
         assert report["history_items"] > 0
         assert "workspace_root" in report
+        assert report["approval_policy"] == "auto"
+        assert isinstance(report["available_tools"], list)
+        assert isinstance(report["restricted_tools"], list)
+        assert isinstance(report["tool_call_summary"], dict)
+        assert report["artifacts_version"] == "1"
+        assert report["failure_category"] == "success"

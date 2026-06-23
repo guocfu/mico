@@ -15,7 +15,7 @@ def build_arg_parser():
         "--approval",
         choices=("auto", "never"),
         default="auto",
-        help="Reserved for future write tools.",
+        help="Tool approval policy; approval=never blocks tools that require approval, such as patch_file.",
     )
     parser.add_argument(
         "--provider",

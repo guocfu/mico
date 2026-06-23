@@ -79,13 +79,13 @@ def test_workspace_blocks_cross_drive_path(tmp_path, monkeypatch):
         workspace.path("file.txt")
 
 
-def test_patch_file_is_risky():
-    assert TOOL_SPECS["patch_file"].risky is True
+def test_patch_file_requires_approval():
+    assert TOOL_SPECS["patch_file"].requires_approval is True
 
 
 @pytest.mark.parametrize("name", ["list_files", "read_file", "search"])
-def test_readonly_tools_are_not_risky(name):
-    assert TOOL_SPECS[name].risky is False
+def test_readonly_tools_do_not_require_approval(name):
+    assert TOOL_SPECS[name].requires_approval is False
 
 
 class TestPatchFile:

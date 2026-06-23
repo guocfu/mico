@@ -7,20 +7,50 @@ from dataclasses import dataclass
 class ToolSpec:
     description: str
     schema: str
-    risky: bool = False
+    requires_approval: bool = False
+    read_only: bool = True
+    concurrency_safe: bool = True
+    max_result_chars: int = 4000
 
 
 TOOL_SPECS = {
     "list_files": ToolSpec("List files in the workspace.", '{"path": "str=."}'),
     "read_file": ToolSpec("Read a UTF-8 file by line range.", '{"path": "str", "start": "int=1", "end": "int=80"}'),
     "search": ToolSpec("Search text in the workspace.", '{"pattern": "str", "path": "str=."}'),
-    "patch_file": ToolSpec("Exact text replacement in a file.", '{"path": "str", "old_text": "str", "new_text": "str"}', risky=True),
+    "patch_file": ToolSpec(
+        "Exact text replacement in a file.",
+        '{"path": "str", "old_text": "str", "new_text": "str"}',
+        requires_approval=True,
+        read_only=False,
+        concurrency_safe=False,
+    ),
 }
+
+
+def build_tool_catalog(approval_policy="auto"):
+    catalog = []
+    for name, spec in TOOL_SPECS.items():
+        allowed = not (spec.requires_approval and approval_policy == "never")
+        approval_note = "blocked under approval=never" if spec.requires_approval else "always allowed"
+        catalog.append({
+            "name": name,
+            "description": spec.description,
+            "schema": spec.schema,
+            "requires_approval": spec.requires_approval,
+            "read_only": spec.read_only,
+            "concurrency_safe": spec.concurrency_safe,
+            "max_result_chars": spec.max_result_chars,
+            "allowed": allowed,
+            "approval_note": approval_note,
+        })
+    return catalog
 
 
 def validate_tool(workspace, name, args):
     if name not in TOOL_SPECS:
         raise ValueError(f"unknown tool: {name}")
+    if not isinstance(args, dict):
+        raise ValueError("tool args must be a JSON object")
     args = args or {}
     if name == "list_files":
         path = workspace.path(args.get("path", "."))
@@ -28,6 +58,8 @@ def validate_tool(workspace, name, args):
             raise ValueError("path is not a directory")
         return
     if name == "read_file":
+        if "path" not in args:
+            raise ValueError("path field is required")
         path = workspace.path(args["path"])
         if not path.is_file():
             raise ValueError("path is not a file")
@@ -43,6 +75,8 @@ def validate_tool(workspace, name, args):
         workspace.path(args.get("path", "."))
         return
     if name == "patch_file":
+        if "path" not in args:
+            raise ValueError("path field is required")
         path = workspace.path(args["path"])
         if not path.is_file():
             raise ValueError("path is not a file")
@@ -54,8 +88,7 @@ def validate_tool(workspace, name, args):
         return
 
 
-def run_tool(workspace, name, args):
-    validate_tool(workspace, name, args)
+def execute_validated_tool(workspace, name, args):
     if name == "list_files":
         return _list_files(workspace, args)
     if name == "read_file":
@@ -65,6 +98,11 @@ def run_tool(workspace, name, args):
     if name == "patch_file":
         return _patch_file(workspace, args)
     raise ValueError(f"unknown tool: {name}")
+
+
+def run_tool(workspace, name, args):
+    validate_tool(workspace, name, args)
+    return execute_validated_tool(workspace, name, args)
 
 
 def _list_files(workspace, args):
