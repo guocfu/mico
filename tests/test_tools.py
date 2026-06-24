@@ -398,6 +398,62 @@ class TestRunCommand:
         assert tr.metadata["exit_code"] is None
         assert tr.metadata["timed_out"] is False
 
+    def test_command_error_content_is_readable(self, tmp_path):
+        workspace = Workspace.build(tmp_path)
+        tr = _run_cmd_via_executor(workspace, {"argv": ["nonexistent_command_xyz"]})
+        assert tr.content != "{}"
+        assert len(tr.content) > 0
+        assert "nonexistent_command_xyz" in tr.content or "No such file" in tr.content or "not found" in tr.content.lower() or "errno" in tr.content.lower() or "winerror" in tr.content.lower()
+        assert "stderr_tail" in tr.metadata
+
+    def test_metadata_has_duration_ms_on_success(self, tmp_path):
+        workspace = Workspace.build(tmp_path)
+        tr = _run_cmd_via_executor(workspace, {"argv": ["python", "-c", "print(1)"]})
+        assert "duration_ms" in tr.metadata
+        assert isinstance(tr.metadata["duration_ms"], int)
+        assert tr.metadata["duration_ms"] >= 0
+
+    def test_metadata_has_duration_ms_on_failure(self, tmp_path):
+        workspace = Workspace.build(tmp_path)
+        tr = _run_cmd_via_executor(workspace, {"argv": ["python", "-c", "import sys; sys.exit(1)"]})
+        assert "duration_ms" in tr.metadata
+        assert isinstance(tr.metadata["duration_ms"], int)
+        assert tr.metadata["duration_ms"] >= 0
+
+    def test_metadata_has_duration_ms_on_timeout(self, tmp_path):
+        workspace = Workspace.build(tmp_path)
+        tr = _run_cmd_via_executor(workspace, {"argv": ["python", "-c", "import time; time.sleep(10)"], "timeout": 1})
+        assert "duration_ms" in tr.metadata
+        assert isinstance(tr.metadata["duration_ms"], int)
+        assert tr.metadata["duration_ms"] >= 0
+
+    def test_metadata_has_duration_ms_on_command_not_found(self, tmp_path):
+        workspace = Workspace.build(tmp_path)
+        tr = _run_cmd_via_executor(workspace, {"argv": ["nonexistent_command_xyz"]})
+        assert "duration_ms" in tr.metadata
+        assert isinstance(tr.metadata["duration_ms"], int)
+        assert tr.metadata["duration_ms"] >= 0
+
+    def test_metadata_has_stdout_tail_stderr_tail_on_success(self, tmp_path):
+        workspace = Workspace.build(tmp_path)
+        tr = _run_cmd_via_executor(workspace, {"argv": ["python", "-c", "print('hello')"]})
+        assert "stdout_tail" in tr.metadata
+        assert "stderr_tail" in tr.metadata
+        assert "hello" in tr.metadata["stdout_tail"]
+
+    def test_metadata_has_stdout_tail_stderr_tail_on_failure(self, tmp_path):
+        workspace = Workspace.build(tmp_path)
+        tr = _run_cmd_via_executor(workspace, {"argv": ["python", "-c", "import sys; sys.stderr.write('err\\n'); sys.exit(1)"]})
+        assert "stdout_tail" in tr.metadata
+        assert "stderr_tail" in tr.metadata
+        assert "err" in tr.metadata["stderr_tail"]
+
+    def test_metadata_has_stdout_tail_stderr_tail_on_command_not_found(self, tmp_path):
+        workspace = Workspace.build(tmp_path)
+        tr = _run_cmd_via_executor(workspace, {"argv": ["nonexistent_command_xyz"]})
+        assert "stdout_tail" in tr.metadata
+        assert "stderr_tail" in tr.metadata
+
     def test_rejects_timeout_none(self, tmp_path):
         workspace = Workspace.build(tmp_path)
         with pytest.raises(ValueError):

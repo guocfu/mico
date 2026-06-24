@@ -68,6 +68,9 @@ class Mico:
         changed_files = []
         changed_file_set = set()
         patches_applied = 0
+        files_written = []
+        files_written_set = set()
+        commands_run = []
         for item in self.history:
             if item.get("role") != "tool":
                 continue
@@ -86,6 +89,21 @@ class Mico:
                 if path and path not in changed_file_set:
                     changed_file_set.add(path)
                     changed_files.append(path)
+                if path and path not in files_written_set:
+                    files_written_set.add(path)
+                    files_written.append(path)
+            if item.get("name") == "run_command" and item.get("metadata", {}).get("error_kind") not in {"approval_denied", "validation_error", "unknown_tool", "repeated_call"}:
+                meta = item.get("metadata", {})
+                commands_run.append({
+                    "argv": item.get("args", {}).get("argv"),
+                    "exit_code": meta.get("exit_code"),
+                    "timed_out": meta.get("timed_out", False),
+                    "duration_ms": meta.get("duration_ms"),
+                    "stdout_tail": meta.get("stdout_tail", ""),
+                    "stderr_tail": meta.get("stderr_tail", ""),
+                    "ok": meta.get("ok", False),
+                    "error_kind": meta.get("error_kind", "unknown"),
+                })
         available_tools = [item["name"] for item in self.tool_executor.tool_catalog() if item["allowed"]]
         report = {
             "artifacts_version": "1",
@@ -98,6 +116,8 @@ class Mico:
             "restricted_tools": self.tool_executor.restricted_tools(),
             "tool_call_summary": tool_call_summary,
             "changed_files": changed_files,
+            "files_written": files_written,
+            "commands_run": commands_run,
             "patches_applied": patches_applied,
         }
         if self._last_prompt_metadata is not None:
@@ -108,6 +128,15 @@ class Mico:
             report["verification_ok"] = verification_result.ok
             report["verification_exit_code"] = verification_result.exit_code
             report["verification_timed_out"] = verification_result.timed_out
+            report["verification_summary"] = {
+                "ok": verification_result.ok,
+                "exit_code": verification_result.exit_code,
+                "timed_out": verification_result.timed_out,
+                "duration_ms": verification_result.duration_ms,
+                "argv": verification_result.argv,
+                "stdout_tail": verification_result.stdout_tail,
+                "stderr_tail": verification_result.stderr_tail,
+            }
         return redact_artifact(report)
 
     @staticmethod

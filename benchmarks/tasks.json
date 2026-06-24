@@ -215,6 +215,7 @@
       "verification_ok": true,
       "verification_exit_code": 0,
       "verification_timed_out": false,
+      "verification_summary_present": true,
       "raw_model_outputs_absent_from_report": true
     }
   },
@@ -233,6 +234,7 @@
       "tools_used": ["write_file"],
       "tool_call_summary": {"ok": 1},
       "file_contents": {"out.txt": "hello world"},
+      "files_written": ["out.txt"],
       "raw_model_outputs_absent_from_report": true
     }
   },
@@ -270,6 +272,8 @@
       "tools_used": ["run_command"],
       "tool_call_summary": {"ok": 1},
       "history_contains": ["42"],
+      "commands_run_count": 1,
+      "commands_run_present": ["argv", "exit_code", "timed_out", "duration_ms", "stdout_tail", "stderr_tail", "ok", "error_kind"],
       "raw_model_outputs_absent_from_report": true
     }
   },
@@ -307,6 +311,8 @@
       "tools_used": ["run_command"],
       "tool_call_summary": {"command_failed": 1},
       "history_contains": ["command_failed", "oops"],
+      "commands_run_count": 1,
+      "commands_run_present": ["argv", "exit_code", "timed_out", "duration_ms", "stdout_tail", "stderr_tail", "ok", "error_kind"],
       "raw_model_outputs_absent_from_report": true
     }
   },
@@ -333,6 +339,61 @@
       "verification_ok": false,
       "verification_exit_code": 1,
       "verification_timed_out": false,
+      "verification_summary_present": true,
+      "raw_model_outputs_absent_from_report": true
+    }
+  },
+  {
+    "name": "create_code_and_verify_success",
+    "group": "task_closure",
+    "description": "agent creates fibonacci.py and run_command verifies it passes",
+    "fake_outputs": [
+      "<tool>{\"name\":\"write_file\",\"args\":{\"path\":\"src/fibonacci.py\",\"content\":\"def fib(n):\\n    a, b = 0, 1\\n    for _ in range(n):\\n        a, b = b, a + b\\n    return a\\n\"}}</tool>",
+      "<tool>{\"name\":\"run_command\",\"args\":{\"argv\":[\"python\",\"verify.py\"]}}</tool>",
+      "<final>created fibonacci.py and verified it passes</final>"
+    ],
+    "workspace_setup": [
+      {"path": "verify.py", "content": "import sys, os\nsys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))\nfrom fibonacci import fib\nassert fib(0) == 0\nassert fib(1) == 1\nassert fib(10) == 55\nprint('ALL TESTS PASSED')\n"}
+    ],
+    "max_steps": 4,
+    "assertions": {
+      "stop_reason": "final",
+      "failure_category": "success",
+      "tools_used": ["write_file", "run_command"],
+      "tool_call_summary": {"ok": 2},
+      "file_contents": {"src/fibonacci.py": "def fib(n):\n    a, b = 0, 1\n    for _ in range(n):\n        a, b = b, a + b\n    return a\n"},
+      "history_contains": ["ALL TESTS PASSED"],
+      "changed_files": ["src/fibonacci.py"],
+      "files_written": ["src/fibonacci.py"],
+      "commands_run_count": 1,
+      "commands_run_present": ["argv", "exit_code", "duration_ms", "stdout_tail", "stderr_tail"],
+      "raw_model_outputs_absent_from_report": true
+    }
+  },
+  {
+    "name": "repair_after_command_failure",
+    "group": "task_closure",
+    "description": "agent writes wrong implementation, run_command fails, agent fixes and re-verifies",
+    "fake_outputs": [
+      "<tool>{\"name\":\"write_file\",\"args\":{\"path\":\"src/fibonacci.py\",\"content\":\"def fib(n):\\n    return n * 2\\n\"}}</tool>",
+      "<tool>{\"name\":\"run_command\",\"args\":{\"argv\":[\"python\",\"verify.py\"]}}</tool>",
+      "<tool>{\"name\":\"write_file\",\"args\":{\"path\":\"src/fibonacci.py\",\"content\":\"def fib(n):\\n    a, b = 0, 1\\n    for _ in range(n):\\n        a, b = b, a + b\\n    return a\\n\"}}</tool>",
+      "<tool>{\"name\":\"run_command\",\"args\":{\"argv\":[\"python\",\"verify.py\"]}}</tool>",
+      "<final>fixed fibonacci.py after failure, now passes</final>"
+    ],
+    "workspace_setup": [
+      {"path": "verify.py", "content": "import sys, os\nsys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))\nfrom fibonacci import fib\nassert fib(0) == 0\nassert fib(1) == 1\nassert fib(10) == 55\nprint('ALL TESTS PASSED')\n"}
+    ],
+    "max_steps": 5,
+    "assertions": {
+      "stop_reason": "final",
+      "failure_category": "success",
+      "tool_call_summary": {"command_failed": 1, "ok": 3},
+      "file_contents": {"src/fibonacci.py": "def fib(n):\n    a, b = 0, 1\n    for _ in range(n):\n        a, b = b, a + b\n    return a\n"},
+      "history_contains": ["AssertionError", "ALL TESTS PASSED"],
+      "changed_files": ["src/fibonacci.py"],
+      "files_written": ["src/fibonacci.py"],
+      "commands_run_count": 2,
       "raw_model_outputs_absent_from_report": true
     }
   }

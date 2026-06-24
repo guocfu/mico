@@ -14,6 +14,9 @@ def compute_metrics(result):
     verification_cases = [case for case in cases if case.verification_ok is not None]
     verification_passed = sum(1 for case in verification_cases if case.verification_ok)
 
+    closure_cases = [case for case in cases if case.group == "task_closure"]
+    closure_passed = sum(1 for case in closure_cases if case.status == "PASS")
+
     return {
         "total": total,
         "passed": passed,
@@ -26,6 +29,8 @@ def compute_metrics(result):
         "parser_retry_count_total": parser_retry_count_total,
         "verifier_pass_rate": _ratio(verification_passed, len(verification_cases)),
         "verification_total": len(verification_cases),
+        "task_closure_pass_rate": _ratio(closure_passed, len(closure_cases)),
+        "task_closure_total": len(closure_cases),
     }
 
 
@@ -44,6 +49,7 @@ def markdown_summary(result):
         f"| Failure attribution coverage | {_percent(metrics['failure_attribution_coverage'])} |",
         f"| Tool guard pass rate | {_percent(metrics['tool_guard_pass_rate'])} |",
         f"| Verifier pass rate | {_percent(metrics['verifier_pass_rate'])} |",
+        f"| Task closure pass rate | {_percent(metrics['task_closure_pass_rate'])} |",
         f"| Parser retry count | {metrics['parser_retry_count_total']} |",
         "",
         "| Case | Group | Status | Stop reason | Failure category | Parser retries |",

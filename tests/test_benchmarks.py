@@ -16,7 +16,7 @@ from benchmarks.metrics import compute_metrics, markdown_summary
 def test_load_tasks_returns_all_cases():
     tasks = load_tasks()
 
-    assert len(tasks) == 17
+    assert len(tasks) == 19
     names = [t["name"] for t in tasks]
     assert "list_files_success" in names
     assert "read_file_success" in names
@@ -35,17 +35,19 @@ def test_load_tasks_returns_all_cases():
     assert "run_command_success" in names
     assert "run_command_denied" in names
     assert "run_command_failure_output" in names
+    assert "create_code_and_verify_success" in names
+    assert "repair_after_command_failure" in names
     assert all("group" in t for t in tasks)
 
 
 def test_run_benchmark_all_cases_pass():
     result = run_benchmark()
 
-    assert result.total == 17
+    assert result.total == 19
     assert result.failed == 0, (
         f"Failed cases: {[c.name for c in result.cases if c.status != 'PASS']}"
     )
-    assert result.passed == 17
+    assert result.passed == 19
 
 
 def test_result_json_has_correct_structure():
@@ -57,7 +59,7 @@ def test_result_json_has_correct_structure():
     assert "failed" in data
     assert "metrics" in data
     assert "cases" in data
-    assert len(data["cases"]) == 17
+    assert len(data["cases"]) == 19
 
     for case in data["cases"]:
         assert "name" in case
@@ -141,8 +143,8 @@ def test_compute_metrics_from_benchmark_result():
     result = run_benchmark()
     metrics = compute_metrics(result)
 
-    assert metrics["total"] == 17
-    assert metrics["passed"] == 17
+    assert metrics["total"] == 19
+    assert metrics["passed"] == 19
     assert metrics["failed"] == 0
     assert metrics["pass_rate"] == 1.0
     assert metrics["artifact_completeness_rate"] == 1.0
@@ -152,6 +154,8 @@ def test_compute_metrics_from_benchmark_result():
     assert metrics["parser_retry_count_total"] == 1
     assert metrics["verifier_pass_rate"] == 0.5
     assert metrics["verification_total"] == 2
+    assert metrics["task_closure_pass_rate"] == 1.0
+    assert metrics["task_closure_total"] == 2
 
 
 def test_markdown_summary_contains_metrics_table():
@@ -253,7 +257,7 @@ def test_write_results_creates_metrics_json(tmp_path):
 
     assert output.exists()
     data = json.loads(output.read_text(encoding="utf-8"))
-    assert data["total"] == 17
+    assert data["total"] == 19
     assert data["failed"] == 0
     assert data["metrics"]["pass_rate"] == 1.0
     text = json.dumps(data)
@@ -301,11 +305,39 @@ def test_verify_fail_after_bad_patch_case():
     assert case.verification_ok is False
 
 
+def test_task_closure_group_cases_pass():
+    tasks = [task for task in load_tasks() if task["group"] == "task_closure"]
+    result = run_benchmark(tasks)
+
+    assert result.total == 2
+    assert result.failed == 0
+    assert all(case.group == "task_closure" for case in result.cases)
+
+
+def test_create_code_and_verify_success_case():
+    result = run_benchmark()
+    case = next(c for c in result.cases if c.name == "create_code_and_verify_success")
+
+    assert case.status == "PASS"
+    assert case.stop_reason == "final"
+    assert case.failure_category == "success"
+
+
+def test_repair_after_command_failure_case():
+    result = run_benchmark()
+    case = next(c for c in result.cases if c.name == "repair_after_command_failure")
+
+    assert case.status == "PASS"
+    assert case.stop_reason == "final"
+    assert case.failure_category == "success"
+
+
 def test_markdown_summary_contains_verifier_pass_rate():
     result = run_benchmark()
     text = markdown_summary(result)
 
     assert "Verifier pass rate" in text
+    assert "Task closure pass rate" in text
 
 
 def test_benchmark_detects_failed_case():
@@ -325,6 +357,147 @@ def test_benchmark_detects_failed_case():
     assert result.failed == 1
     assert result.cases[0].status == "FAIL"
     assert "stop_reason" in result.cases[0].assertions["errors"][0]
+
+
+def test_check_assertions_changed_files_passes():
+    evidence = _evidence(
+        state={"stop_reason": "final", "tools": ["write_file"]},
+        report={"failure_category": "success", "changed_files": ["src/fibonacci.py"]},
+    )
+    task = {"assertions": {"changed_files": ["src/fibonacci.py"]}}
+
+    errors = _check_assertions(task, evidence)
+
+    assert errors == []
+
+
+def test_check_assertions_changed_files_wrong_list_fails():
+    evidence = _evidence(
+        state={"stop_reason": "final", "tools": ["write_file"]},
+        report={"failure_category": "success", "changed_files": ["src/wrong.py"]},
+    )
+    task = {"assertions": {"changed_files": ["src/fibonacci.py"]}}
+
+    errors = _check_assertions(task, evidence)
+
+    assert len(errors) == 1
+    assert "changed_files" in errors[0]
+
+
+def test_check_assertions_files_written_passes():
+    evidence = _evidence(
+        state={"stop_reason": "final", "tools": ["write_file"]},
+        report={"failure_category": "success", "files_written": ["out.txt"]},
+    )
+    task = {"assertions": {"files_written": ["out.txt"]}}
+
+    errors = _check_assertions(task, evidence)
+
+    assert errors == []
+
+
+def test_check_assertions_files_written_wrong_list_fails():
+    evidence = _evidence(
+        state={"stop_reason": "final", "tools": ["write_file"]},
+        report={"failure_category": "success", "files_written": ["wrong.txt"]},
+    )
+    task = {"assertions": {"files_written": ["out.txt"]}}
+
+    errors = _check_assertions(task, evidence)
+
+    assert len(errors) == 1
+    assert "files_written" in errors[0]
+
+
+def test_check_assertions_commands_run_count_passes():
+    evidence = _evidence(
+        state={"stop_reason": "final", "tools": ["run_command"]},
+        report={"failure_category": "success", "commands_run": [{"argv": ["python", "-c", "print(1)"]}]},
+    )
+    task = {"assertions": {"commands_run_count": 1}}
+
+    errors = _check_assertions(task, evidence)
+
+    assert errors == []
+
+
+def test_check_assertions_commands_run_count_wrong_fails():
+    evidence = _evidence(
+        state={"stop_reason": "final", "tools": ["run_command"]},
+        report={"failure_category": "success", "commands_run": []},
+    )
+    task = {"assertions": {"commands_run_count": 1}}
+
+    errors = _check_assertions(task, evidence)
+
+    assert len(errors) == 1
+    assert "commands_run_count" in errors[0]
+
+
+def test_check_assertions_commands_run_present_passes():
+    evidence = _evidence(
+        state={"stop_reason": "final", "tools": ["run_command"]},
+        report={"failure_category": "success", "commands_run": [
+            {"argv": ["x"], "exit_code": 0, "duration_ms": 10, "ok": True}
+        ]},
+    )
+    task = {"assertions": {"commands_run_present": ["argv", "exit_code", "duration_ms"]}}
+
+    errors = _check_assertions(task, evidence)
+
+    assert errors == []
+
+
+def test_check_assertions_commands_run_present_missing_key_fails():
+    evidence = _evidence(
+        state={"stop_reason": "final", "tools": ["run_command"]},
+        report={"failure_category": "success", "commands_run": [
+            {"argv": ["x"], "exit_code": 0}
+        ]},
+    )
+    task = {"assertions": {"commands_run_present": ["duration_ms"]}}
+
+    errors = _check_assertions(task, evidence)
+
+    assert len(errors) == 1
+    assert "commands_run missing key" in errors[0]
+
+
+def test_check_assertions_verification_summary_present_passes():
+    evidence = _evidence(
+        state={"stop_reason": "final", "tools": []},
+        report={"failure_category": "success", "verification_summary": {"ok": True}},
+    )
+    task = {"assertions": {"verification_summary_present": True}}
+
+    errors = _check_assertions(task, evidence)
+
+    assert errors == []
+
+
+def test_check_assertions_verification_summary_present_missing_fails():
+    evidence = _evidence(
+        state={"stop_reason": "final", "tools": []},
+        report={"failure_category": "success"},
+    )
+    task = {"assertions": {"verification_summary_present": True}}
+
+    errors = _check_assertions(task, evidence)
+
+    assert len(errors) == 1
+    assert "verification_summary" in errors[0]
+
+
+def test_check_assertions_verification_summary_absent_passes():
+    evidence = _evidence(
+        state={"stop_reason": "final", "tools": []},
+        report={"failure_category": "success"},
+    )
+    task = {"assertions": {"verification_summary_present": False}}
+
+    errors = _check_assertions(task, evidence)
+
+    assert errors == []
 
 
 def _evidence(state, report):

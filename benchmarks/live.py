@@ -57,6 +57,17 @@ _LIVE_SMOKE_CASES = [
         "expected_tool": "search",
         "user_message": 'Use the search tool for pattern "hello" in path ".". Then summarize the match.',
     },
+    {
+        "name": "create_and_verify_python_task",
+        "expected_tools": ["write_file", "run_command"],
+        "approval_policy": "auto",
+        "setup_verify_py": True,
+        "user_message": (
+            "Create src/fibonacci.py implementing fib(n) with fib(0)=0, fib(1)=1, "
+            "fib(n)=fib(n-1)+fib(n-2) for n>=2. "
+            "Then run the command: python verify.py"
+        ),
+    },
 ]
 
 _REQUIRED_KEYS = ("MICO_API_KEY", "MICO_BASE_URL", "MICO_MODEL")
@@ -87,6 +98,20 @@ def _default_model_client_factory():
 def _setup_workspace(root):
     """Create a tiny workspace with a known file for smoke cases."""
     (root / "hello.txt").write_text("hello world\n", encoding="utf-8")
+
+
+def _setup_verify_py(root):
+    """Create verify.py for writable coding task cases."""
+    (root / "verify.py").write_text(
+        "import sys, os\n"
+        "sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))\n"
+        "from fibonacci import fib\n"
+        "assert fib(0) == 0\n"
+        "assert fib(1) == 1\n"
+        "assert fib(10) == 55\n"
+        "print('ALL TESTS PASSED')\n",
+        encoding="utf-8",
+    )
 
 
 def _safe_error(exc):
@@ -126,6 +151,12 @@ def _result_to_dict(result):
     }
 
 
+def _is_ordered_subsequence(expected, actual):
+    """Return True if *expected* is an ordered subsequence of *actual*."""
+    it = iter(actual)
+    return all(any(a == e for a in it) for e in expected)
+
+
 def _run_case(case, model_client_factory):
     """Run a single smoke case in a fresh temp workspace. Returns LiveCaseResult."""
     _TEMP_ROOT.mkdir(parents=True, exist_ok=True)
@@ -136,13 +167,18 @@ def _run_case(case, model_client_factory):
         runs_dir = ws_root / ".mico" / "runs"
         _setup_workspace(ws_root)
 
+        if case.get("setup_verify_py"):
+            _setup_verify_py(ws_root)
+
+        approval_policy = case.get("approval_policy", "never")
+        max_steps = case.get("max_steps", 4)
         model_client = _make_model_client(model_client_factory, case)
         agent = Mico(
             model_client=model_client,
             workspace=workspace,
             run_store=RunStore(runs_dir),
-            approval_policy="never",
-            max_steps=4,
+            approval_policy=approval_policy,
+            max_steps=max_steps,
         )
 
         agent.ask(case["user_message"])
@@ -170,12 +206,22 @@ def _run_case(case, model_client_factory):
             errors.append(f"stop_reason={stop_reason}, expected final")
         if failure_category != "success":
             errors.append(f"failure_category={failure_category}, expected success")
-        expected_tool = case["expected_tool"]
         tools = state.get("tools", [])
-        if expected_tool not in tools:
-            errors.append(f"expected tool {expected_tool!r} to be used, got {tools!r}")
-        if report.get("approval_policy") != "never":
-            errors.append(f"approval_policy={report.get('approval_policy')}, expected never")
+        if "expected_tools" in case:
+            expected_tools = case["expected_tools"]
+            if not _is_ordered_subsequence(expected_tools, tools):
+                errors.append(f"expected tools {expected_tools} as ordered subsequence, got {tools}")
+            if "run_command" in expected_tools:
+                history_text = json.dumps(agent.history, ensure_ascii=False)
+                if "ALL TESTS PASSED" not in history_text:
+                    errors.append("verification failed: 'ALL TESTS PASSED' not in history")
+        else:
+            expected_tool = case["expected_tool"]
+            if expected_tool not in tools:
+                errors.append(f"expected tool {expected_tool!r} to be used, got {tools!r}")
+        expected_approval = case.get("approval_policy", "never")
+        if report.get("approval_policy") != expected_approval:
+            errors.append(f"approval_policy={report.get('approval_policy')}, expected {expected_approval}")
 
         return LiveCaseResult(
             name=case["name"],

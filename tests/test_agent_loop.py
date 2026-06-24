@@ -1236,3 +1236,230 @@ def test_report_does_not_contain_raw_model_output(tmp_path):
     run_dirs = list((tmp_path / ".mico" / "runs").iterdir())
     report_text = (run_dirs[0] / "report.json").read_text(encoding="utf-8")
     assert raw_text not in report_text
+
+
+def test_report_includes_files_written_for_write_file(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"write_file","args":{"path":"out.txt","content":"data"}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    agent.ask("create file")
+
+    run_dirs = list((tmp_path / ".mico" / "runs").iterdir())
+    report = json.loads((run_dirs[0] / "report.json").read_text(encoding="utf-8"))
+    assert "files_written" in report
+    assert report["files_written"] == ["out.txt"]
+
+
+def test_report_files_written_empty_when_no_write_file(tmp_path):
+    (tmp_path / "a.txt").write_text("hello\n", encoding="utf-8")
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"read_file","args":{"path":"a.txt","start":1,"end":80}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    agent.ask("read file")
+
+    run_dirs = list((tmp_path / ".mico" / "runs").iterdir())
+    report = json.loads((run_dirs[0] / "report.json").read_text(encoding="utf-8"))
+    assert report["files_written"] == []
+
+
+def test_report_commands_run_contains_run_command_metadata(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"run_command","args":{"argv":["python","-c","print(42)"]}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    agent.ask("run python")
+
+    run_dirs = list((tmp_path / ".mico" / "runs").iterdir())
+    report = json.loads((run_dirs[0] / "report.json").read_text(encoding="utf-8"))
+    assert "commands_run" in report
+    assert len(report["commands_run"]) == 1
+    cmd = report["commands_run"][0]
+    assert cmd["argv"] == ["python", "-c", "print(42)"]
+    assert cmd["exit_code"] == 0
+    assert cmd["timed_out"] is False
+    assert isinstance(cmd["duration_ms"], int)
+    assert cmd["duration_ms"] >= 0
+    assert "42" in cmd["stdout_tail"]
+    assert cmd["ok"] is True
+    assert cmd["error_kind"] == "ok"
+
+
+def test_report_commands_run_captures_failure(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"run_command","args":{"argv":["python","-c","import sys; sys.exit(2)"]}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    agent.ask("run failing cmd")
+
+    run_dirs = list((tmp_path / ".mico" / "runs").iterdir())
+    report = json.loads((run_dirs[0] / "report.json").read_text(encoding="utf-8"))
+    assert len(report["commands_run"]) == 1
+    cmd = report["commands_run"][0]
+    assert cmd["exit_code"] == 2
+    assert cmd["ok"] is False
+    assert cmd["error_kind"] == "command_failed"
+
+
+def test_report_commands_run_empty_when_no_run_command(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"write_file","args":{"path":"out.txt","content":"x"}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    agent.ask("write file")
+
+    run_dirs = list((tmp_path / ".mico" / "runs").iterdir())
+    report = json.loads((run_dirs[0] / "report.json").read_text(encoding="utf-8"))
+    assert report["commands_run"] == []
+
+
+def test_report_commands_run_empty_under_approval_never(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"run_command","args":{"argv":["python","-c","print(1)"]}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+        approval_policy="never",
+    )
+
+    agent.ask("run cmd")
+
+    run_dirs = list((tmp_path / ".mico" / "runs").iterdir())
+    report = json.loads((run_dirs[0] / "report.json").read_text(encoding="utf-8"))
+    assert report["commands_run"] == []
+
+
+def test_report_verification_summary_present_with_verify(tmp_path):
+    from mico.verification import VerificationResult
+
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient(["<final>ok</final>"]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    agent.ask("hello")
+
+    verification_result = VerificationResult(
+        command="python verify.py",
+        argv=["python", "verify.py"],
+        ok=True,
+        exit_code=0,
+        duration_ms=150,
+        timed_out=False,
+        stdout_tail="ALL TESTS PASSED",
+        stderr_tail="",
+    )
+    run_dirs = list((tmp_path / ".mico" / "runs").iterdir())
+    report = agent.build_report(agent._last_task_state, verification_result=verification_result)
+    assert "verification_summary" in report
+    summary = report["verification_summary"]
+    assert summary["ok"] is True
+    assert summary["exit_code"] == 0
+    assert summary["timed_out"] is False
+    assert summary["duration_ms"] == 150
+    assert summary["argv"] == ["python", "verify.py"]
+    assert summary["stdout_tail"] == "ALL TESTS PASSED"
+    assert summary["stderr_tail"] == ""
+
+
+def test_report_verification_summary_absent_without_verify(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient(["<final>ok</final>"]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    agent.ask("hello")
+
+    run_dirs = list((tmp_path / ".mico" / "runs").iterdir())
+    report = json.loads((run_dirs[0] / "report.json").read_text(encoding="utf-8"))
+    assert "verification_summary" not in report
+
+
+def test_report_preserves_legacy_verification_fields_with_summary(tmp_path):
+    from mico.verification import VerificationResult
+
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient(["<final>ok</final>"]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    agent.ask("hello")
+
+    verification_result = VerificationResult(
+        command="python verify.py",
+        argv=["python", "verify.py"],
+        ok=False,
+        exit_code=1,
+        duration_ms=200,
+        timed_out=False,
+        stdout_tail="FAIL",
+        stderr_tail="AssertionError",
+    )
+    report = agent.build_report(agent._last_task_state, verification_result=verification_result)
+    # Legacy fields still present
+    assert report["verification_ok"] is False
+    assert report["verification_exit_code"] == 1
+    assert report["verification_timed_out"] is False
+    # New summary also present
+    assert "verification_summary" in report
+    assert report["verification_summary"]["ok"] is False
+
+
+def test_report_files_written_deduplicates_multiple_writes(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"write_file","args":{"path":"out.txt","content":"v1"}}</tool>',
+            '<tool>{"name":"write_file","args":{"path":"out.txt","content":"v2"}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    agent.ask("write twice")
+
+    run_dirs = list((tmp_path / ".mico" / "runs").iterdir())
+    report = json.loads((run_dirs[0] / "report.json").read_text(encoding="utf-8"))
+    assert report["files_written"] == ["out.txt"]
+    assert report["changed_files"] == ["out.txt"]

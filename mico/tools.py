@@ -1,6 +1,7 @@
 import json
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -245,6 +246,7 @@ _MAX_STDERR = 1000
 def _run_command(workspace, args):
     argv = list(args["argv"])
     timeout = int(args.get("timeout", 30))
+    started = time.monotonic()
     try:
         result = subprocess.run(
             argv,
@@ -254,28 +256,56 @@ def _run_command(workspace, args):
             text=True,
             shell=False,
         )
+        duration_ms = int((time.monotonic() - started) * 1000)
         stdout = result.stdout[-_MAX_STDOUT:] if len(result.stdout) > _MAX_STDOUT else result.stdout
         stderr = result.stderr[-_MAX_STDERR:] if len(result.stderr) > _MAX_STDERR else result.stderr
         if result.returncode == 0:
-            metadata = {"ok": True, "error_kind": "ok", "exit_code": 0, "timed_out": False}
+            metadata = {
+                "ok": True, "error_kind": "ok", "exit_code": 0,
+                "timed_out": False, "duration_ms": duration_ms,
+                "stdout_tail": stdout, "stderr_tail": stderr,
+            }
             return json.dumps({
                 "__tool_metadata__": metadata,
                 "stdout": stdout,
                 "stderr": stderr,
             })
-        metadata = {"ok": False, "error_kind": "command_failed", "exit_code": result.returncode, "timed_out": False}
+        metadata = {
+            "ok": False, "error_kind": "command_failed", "exit_code": result.returncode,
+            "timed_out": False, "duration_ms": duration_ms,
+            "stdout_tail": stdout, "stderr_tail": stderr,
+        }
         return json.dumps({
             "__tool_metadata__": metadata,
             "stdout": stdout,
             "stderr": stderr,
         })
-    except subprocess.TimeoutExpired:
-        metadata = {"ok": False, "error_kind": "command_timed_out", "exit_code": None, "timed_out": True}
+    except subprocess.TimeoutExpired as exc:
+        duration_ms = int((time.monotonic() - started) * 1000)
+        stdout = ""
+        stderr = ""
+        if exc.stdout:
+            stdout = exc.stdout[-_MAX_STDOUT:] if len(exc.stdout) > _MAX_STDOUT else exc.stdout
+        if exc.stderr:
+            stderr = exc.stderr[-_MAX_STDERR:] if len(exc.stderr) > _MAX_STDERR else exc.stderr
+        metadata = {
+            "ok": False, "error_kind": "command_timed_out", "exit_code": None,
+            "timed_out": True, "duration_ms": duration_ms,
+            "stdout_tail": stdout, "stderr_tail": stderr,
+        }
         return json.dumps({
             "__tool_metadata__": metadata,
+            "stdout": stdout,
+            "stderr": stderr,
         })
     except (FileNotFoundError, OSError) as exc:
-        metadata = {"ok": False, "error_kind": "command_error", "exit_code": None, "timed_out": False, "error": str(exc)}
+        duration_ms = int((time.monotonic() - started) * 1000)
+        metadata = {
+            "ok": False, "error_kind": "command_error", "exit_code": None,
+            "timed_out": False, "duration_ms": duration_ms,
+            "stdout_tail": "", "stderr_tail": str(exc),
+        }
         return json.dumps({
             "__tool_metadata__": metadata,
+            "error": str(exc),
         })

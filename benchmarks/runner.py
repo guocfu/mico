@@ -209,6 +209,13 @@ def _check_assertions(task, evidence):
             if raw and raw in report_text:
                 errors.append(f"report contains raw model output for task {task['name']}")
 
+    if "changed_files" in expected:
+        actual_changed = report.get("changed_files", [])
+        if actual_changed != expected["changed_files"]:
+            errors.append(
+                f"changed_files: expected {expected['changed_files']}, got {actual_changed}"
+            )
+
     if "verification_ok" in expected:
         actual = report.get("verification_ok")
         if actual != expected["verification_ok"]:
@@ -223,6 +230,32 @@ def _check_assertions(task, evidence):
         actual = report.get("verification_timed_out")
         if actual != expected["verification_timed_out"]:
             errors.append(f"verification_timed_out: expected {expected['verification_timed_out']}, got {actual}")
+
+    if "files_written" in expected:
+        actual_written = report.get("files_written", [])
+        if actual_written != expected["files_written"]:
+            errors.append(
+                f"files_written: expected {expected['files_written']}, got {actual_written}"
+            )
+
+    if "commands_run_count" in expected:
+        actual_commands = report.get("commands_run", [])
+        if len(actual_commands) != expected["commands_run_count"]:
+            errors.append(
+                f"commands_run_count: expected {expected['commands_run_count']}, got {len(actual_commands)}"
+            )
+
+    if "commands_run_present" in expected:
+        actual_commands = report.get("commands_run", [])
+        for key in expected["commands_run_present"]:
+            if not any(key in cmd for cmd in actual_commands):
+                errors.append(f"commands_run missing key in any entry: {key}")
+
+    if "verification_summary_present" in expected:
+        if expected["verification_summary_present"] and "verification_summary" not in report:
+            errors.append("verification_summary missing from report")
+        elif not expected["verification_summary_present"] and "verification_summary" in report:
+            errors.append("verification_summary should not be in report")
 
     return errors
 

@@ -14,7 +14,29 @@ from benchmarks.live import (
 class _ScriptedLiveModelClient:
     def __init__(self, case):
         self.prompts = []
-        tool = case["expected_tool"]
+        expected_tools = case.get("expected_tools")
+        tool = case.get("expected_tool")
+        if expected_tools:
+            self.outputs = []
+            for t in expected_tools:
+                if t == "write_file":
+                    self.outputs.append(
+                        '<tool>{"name":"write_file","args":{"path":"src/fibonacci.py","content":"def fib(n):\\n    a, b = 0, 1\\n    for _ in range(n):\\n        a, b = b, a + b\\n    return a\\n"}}</tool>'
+                    )
+                elif t == "run_command":
+                    self.outputs.append(
+                        '<tool>{"name":"run_command","args":{"argv":["python","verify.py"]}}</tool>'
+                    )
+                elif t == "list_files":
+                    self.outputs.append(
+                        '<tool>{"name":"list_files","args":{"path":"."}}</tool>'
+                    )
+                elif t == "read_file":
+                    self.outputs.append(
+                        '<tool>{"name":"read_file","args":{"path":"hello.txt"}}</tool>'
+                    )
+            self.outputs.append("<final>done</final>")
+            return
         if tool == "list_files":
             tool_output = '<tool>{"name":"list_files","args":{"path":"."}}</tool>'
         elif tool == "read_file":
@@ -83,17 +105,17 @@ class TestRunLiveSmoke:
 
         assert results_path.exists()
         data = json.loads(results_path.read_text(encoding="utf-8"))
-        assert data["total"] == 3
-        assert data["passed"] == 3
+        assert data["total"] == 4
+        assert data["passed"] == 4
         assert data["failed"] == 0
-        assert len(data["cases"]) == 3
+        assert len(data["cases"]) == 4
 
     def test_all_cases_pass_with_fake(self, tmp_path):
         results_path = tmp_path / "results" / "live-latest.json"
         result = run_live_smoke(model_client_factory=_fake_factory, results_path=results_path)
 
-        assert result.total == 3
-        assert result.passed == 3
+        assert result.total == 4
+        assert result.passed == 4
         assert result.failed == 0
         for case in result.cases:
             assert case.status == "PASS"
@@ -119,15 +141,18 @@ class TestRunLiveSmoke:
         assert "sk-secret-key-leak-test" not in text
 
     def test_default_approval_never(self, tmp_path):
-        """Verify live prompts are built under approval_policy=never."""
+        """Verify read-only cases use approval_policy=never and writable case uses auto."""
         factory = _RecordingFactory()
         results_path = tmp_path / "results" / "live-latest.json"
         result = run_live_smoke(model_client_factory=factory, results_path=results_path)
 
-        assert result.passed == 3
-        assert factory.clients
-        for client in factory.clients:
+        assert result.passed == 4
+        assert len(factory.clients) == 4
+        # First 3 are read-only cases with approval=never
+        for client in factory.clients[:3]:
             assert any("Approval policy: never" in prompt for prompt in client.prompts)
+        # Last case is writable with approval=auto
+        assert any("Approval policy: auto" in prompt for prompt in factory.clients[3].prompts)
 
     def test_approval_never_in_report(self, tmp_path):
         """Verify approval_policy=never is recorded in run artifacts."""
@@ -173,7 +198,7 @@ class TestRunLiveSmoke:
         results_path = tmp_path / "results" / "live-latest.json"
         result = run_live_smoke(model_client_factory=bad_factory, results_path=results_path)
 
-        assert result.failed == 3
+        assert result.failed == 4
         for case in result.cases:
             assert case.status == "ERROR"
             assert "connection refused" in case.errors[0]
@@ -202,6 +227,58 @@ class TestRunLiveSmoke:
         assert read_case.status == "FAIL"
         assert search_case.status == "FAIL"
         assert "expected tool" in read_case.errors[0]
+
+    def test_writable_case_without_run_command_fails(self, tmp_path):
+        """Writable case that only writes but never runs verify must FAIL."""
+
+        class WriteOnlyClient:
+            def __init__(self):
+                self.outputs = [
+                    '<tool>{"name":"write_file","args":{"path":"src/fibonacci.py","content":"def fib(n):\\n    return n\\n"}}</tool>',
+                    "<final>wrote file</final>",
+                ]
+
+            def complete(self, _prompt, *_args, **_kwargs):
+                return self.outputs.pop(0)
+
+        def write_only_factory(_case):
+            return WriteOnlyClient()
+
+        result = run_live_smoke(
+            model_client_factory=write_only_factory,
+            results_path=tmp_path / "results" / "live-latest.json",
+        )
+
+        writable_case = next(case for case in result.cases if case.name == "create_and_verify_python_task")
+        assert writable_case.status == "FAIL"
+        errors_text = " ".join(writable_case.errors)
+        assert "run_command" in errors_text or "ALL TESTS PASSED" in errors_text
+
+    def test_writable_case_with_extra_tools_passes(self, tmp_path):
+        """Writable case with extra exploration tools before write+run still PASS."""
+
+        class ExploratoryClient:
+            def __init__(self):
+                self.outputs = [
+                    '<tool>{"name":"list_files","args":{"path":"."}}</tool>',
+                    '<tool>{"name":"write_file","args":{"path":"src/fibonacci.py","content":"def fib(n):\\n    a, b = 0, 1\\n    for _ in range(n):\\n        a, b = b, a + b\\n    return a\\n"}}</tool>',
+                    '<tool>{"name":"run_command","args":{"argv":["python","verify.py"]}}</tool>',
+                    "<final>done</final>",
+                ]
+
+            def complete(self, _prompt, *_args, **_kwargs):
+                return self.outputs.pop(0)
+
+        def exploratory_factory(_case):
+            return ExploratoryClient()
+
+        result = run_live_smoke(
+            model_client_factory=exploratory_factory,
+            results_path=tmp_path / "results" / "live-latest.json",
+        )
+
+        writable_case = next(case for case in result.cases if case.name == "create_and_verify_python_task")
+        assert writable_case.status == "PASS"
 
 
 class TestResultToDict:
