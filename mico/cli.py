@@ -6,6 +6,7 @@ from .dotenv import load_dotenv
 from .providers import FakeModelClient, OpenAICompatibleModelClient
 from .runtime import Mico
 from .state import RunStore
+from .verification import run_verification, write_verification_json
 from .workspace import Workspace
 
 
@@ -38,6 +39,17 @@ def build_arg_parser():
         type=int,
         default=120,
         help="HTTP timeout in seconds for model requests (default: 120).",
+    )
+    parser.add_argument(
+        "--verify-cmd",
+        default=None,
+        help="Verification command to run after agent completes (e.g. 'python verify.py').",
+    )
+    parser.add_argument(
+        "--verify-timeout",
+        type=int,
+        default=120,
+        help="Timeout in seconds for the verification command (default: 120).",
     )
     return parser
 
@@ -111,5 +123,20 @@ def main(argv=None):
     if not prompt:
         raise SystemExit("mico requires a one-shot prompt for v0")
     agent = build_agent(args)
-    print(agent.ask(prompt))
+    final_answer = agent.ask(prompt)
+    print(final_answer)
+
+    if args.verify_cmd:
+        if agent._last_task_state is None:
+            raise SystemExit("no run state found for verification")
+        run_dir = agent.run_store.run_dir(agent._last_task_state)
+        vresult = run_verification(
+            agent.workspace.root, args.verify_cmd, timeout=args.verify_timeout
+        )
+        write_verification_json(vresult, run_dir / "verification.json")
+        report = agent.build_report(
+            agent._last_task_state, verification_result=vresult
+        )
+        agent.run_store.write_report(agent._last_task_state, report)
+
     return 0

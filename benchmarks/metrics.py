@@ -11,6 +11,9 @@ def compute_metrics(result):
     governance_cases = [case for case in cases if case.group == "tool_governance"]
     governance_passed = sum(1 for case in governance_cases if case.status == "PASS")
 
+    verification_cases = [case for case in cases if case.verification_ok is not None]
+    verification_passed = sum(1 for case in verification_cases if case.verification_ok)
+
     return {
         "total": total,
         "passed": passed,
@@ -21,6 +24,8 @@ def compute_metrics(result):
         "tool_guard_pass_rate": _ratio(governance_passed, len(governance_cases)),
         "tool_governance_total": len(governance_cases),
         "parser_retry_count_total": parser_retry_count_total,
+        "verifier_pass_rate": _ratio(verification_passed, len(verification_cases)),
+        "verification_total": len(verification_cases),
     }
 
 
@@ -38,6 +43,7 @@ def markdown_summary(result):
         f"| Artifact completeness | {_percent(metrics['artifact_completeness_rate'])} |",
         f"| Failure attribution coverage | {_percent(metrics['failure_attribution_coverage'])} |",
         f"| Tool guard pass rate | {_percent(metrics['tool_guard_pass_rate'])} |",
+        f"| Verifier pass rate | {_percent(metrics['verifier_pass_rate'])} |",
         f"| Parser retry count | {metrics['parser_retry_count_total']} |",
         "",
         "| Case | Group | Status | Stop reason | Failure category | Parser retries |",

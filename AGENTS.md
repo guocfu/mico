@@ -50,8 +50,9 @@
 ## 验收
 
 - 每次主要实现后至少运行：
-  - `python -m pytest`
+  - `python -m pytest --basetemp .tmp/pytest-basetemp`
   - `python -m mico "列出当前目录"`
+- 运行 pytest 时优先把临时目录固定到仓库内的 `.tmp/`，减少 Codex 沙箱因系统临时目录读写而触发额外授权；如需区分多次运行，可使用 `.tmp/pytest-basetemp-<task>`。
 - 验收时确认默认 fake provider 不需要 API key 或网络访问。
 - 验收时确认 `.mico/runs/` 下生成：
   - `trace.jsonl`

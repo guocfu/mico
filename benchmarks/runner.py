@@ -7,6 +7,7 @@ from pathlib import Path
 from mico.providers import FakeModelClient
 from mico.runtime import Mico
 from mico.state import RunStore
+from mico.verification import run_verification
 from mico.workspace import Workspace
 
 
@@ -31,6 +32,7 @@ class CaseResult:
     group: str = "harness_regression"
     artifacts_complete: bool = False
     parser_retry_count: int = 0
+    verification_ok: bool | None = None
 
 
 @dataclass
@@ -78,6 +80,13 @@ def _run_case(task):
 
         final_answer = agent.ask(task.get("user_message", task["name"]))
 
+        verification_result = None
+        verify_cmd = task.get("verify_cmd")
+        if verify_cmd:
+            verification_result = run_verification(root, verify_cmd)
+            report = agent.build_report(agent._last_task_state, verification_result=verification_result)
+            agent.run_store.write_report(agent._last_task_state, report)
+
         run_dirs = list(runs_dir.iterdir())
         assert len(run_dirs) == 1, f"expected 1 run dir, got {len(run_dirs)}"
         run_dir = run_dirs[0]
@@ -118,6 +127,7 @@ def _run_case(task):
             "artifacts_exist": artifacts_exist,
             "artifacts_complete": all(artifacts_exist.values()),
             "parser_retry_count": parser_retry_count,
+            "verification_result": verification_result,
             "file_contents": file_contents,
             "final_answer": final_answer,
             "artifact_text": {
@@ -199,6 +209,21 @@ def _check_assertions(task, evidence):
             if raw and raw in report_text:
                 errors.append(f"report contains raw model output for task {task['name']}")
 
+    if "verification_ok" in expected:
+        actual = report.get("verification_ok")
+        if actual != expected["verification_ok"]:
+            errors.append(f"verification_ok: expected {expected['verification_ok']}, got {actual}")
+
+    if "verification_exit_code" in expected:
+        actual = report.get("verification_exit_code")
+        if actual != expected["verification_exit_code"]:
+            errors.append(f"verification_exit_code: expected {expected['verification_exit_code']}, got {actual}")
+
+    if "verification_timed_out" in expected:
+        actual = report.get("verification_timed_out")
+        if actual != expected["verification_timed_out"]:
+            errors.append(f"verification_timed_out: expected {expected['verification_timed_out']}, got {actual}")
+
     return errors
 
 
@@ -233,6 +258,7 @@ def run_benchmark(tasks=None):
                     group=group,
                     artifacts_complete=evidence["artifacts_complete"],
                     parser_retry_count=evidence["parser_retry_count"],
+                    verification_ok=evidence["verification_result"].ok if evidence.get("verification_result") else None,
                 )
             )
         except Exception as exc:
@@ -248,6 +274,7 @@ def run_benchmark(tasks=None):
                     group=group,
                     artifacts_complete=False,
                     parser_retry_count=0,
+                    verification_ok=None,
                 )
             )
 
@@ -272,6 +299,7 @@ def result_to_dict(result):
                 "failure_category": case.failure_category,
                 "artifacts_complete": case.artifacts_complete,
                 "parser_retry_count": case.parser_retry_count,
+                "verification_ok": case.verification_ok,
                 "assertions": case.assertions,
             }
             for case in result.cases

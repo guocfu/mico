@@ -54,6 +54,7 @@ class AgentLoop:
                     },
                 )
                 agent.run_store.write_report(task_state, agent.build_report(task_state))
+                agent._last_task_state = task_state
                 return final
             parsed = agent.parse_output(raw)
             kind, payload = parsed.kind, parsed.payload
@@ -108,6 +109,7 @@ class AgentLoop:
                 },
             )
             agent.run_store.write_report(task_state, agent.build_report(task_state))
+            agent._last_task_state = task_state
             return final
 
         if task_state.attempts >= max_attempts:
@@ -130,4 +132,5 @@ class AgentLoop:
             },
         )
         agent.run_store.write_report(task_state, agent.build_report(task_state))
+        agent._last_task_state = task_state
         return final

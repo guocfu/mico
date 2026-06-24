@@ -191,5 +191,57 @@
       "history_contains": ["repeated identical tool call"],
       "raw_model_outputs_absent_from_report": true
     }
+  },
+  {
+    "name": "patch_and_verify_success",
+    "group": "verification",
+    "description": "agent patches buggy file and verification passes",
+    "fake_outputs": [
+      "<tool>{\"name\":\"read_file\",\"args\":{\"path\":\"math_buggy.py\"}}</tool>",
+      "<tool>{\"name\":\"patch_file\",\"args\":{\"path\":\"math_buggy.py\",\"old_text\":\"return a - b\",\"new_text\":\"return a + b\"}}</tool>",
+      "<final>fixed</final>"
+    ],
+    "workspace_setup": [
+      {"path": "math_buggy.py", "content": "def add(a, b):\n    return a - b\n"},
+      {"path": "verify_math.py", "content": "import sys\nsys.path.insert(0, '.')\nfrom math_buggy import add\nassert add(1, 2) == 3\nassert add(-1, 1) == 0\nprint('ALL TESTS PASSED')\n"}
+    ],
+    "verify_cmd": "python verify_math.py",
+    "assertions": {
+      "stop_reason": "final",
+      "failure_category": "success",
+      "tools_used": ["read_file", "patch_file"],
+      "tool_call_summary": {"ok": 2},
+      "file_contents": {"math_buggy.py": "def add(a, b):\n    return a + b\n"},
+      "verification_ok": true,
+      "verification_exit_code": 0,
+      "verification_timed_out": false,
+      "raw_model_outputs_absent_from_report": true
+    }
+  },
+  {
+    "name": "verify_fail_after_bad_patch",
+    "group": "verification",
+    "description": "agent patches incorrectly and verification fails",
+    "fake_outputs": [
+      "<tool>{\"name\":\"read_file\",\"args\":{\"path\":\"math_buggy.py\"}}</tool>",
+      "<tool>{\"name\":\"patch_file\",\"args\":{\"path\":\"math_buggy.py\",\"old_text\":\"return a - b\",\"new_text\":\"return a * b\"}}</tool>",
+      "<final>patched</final>"
+    ],
+    "workspace_setup": [
+      {"path": "math_buggy.py", "content": "def add(a, b):\n    return a - b\n"},
+      {"path": "verify_math.py", "content": "import sys\nsys.path.insert(0, '.')\nfrom math_buggy import add\nassert add(1, 2) == 3\nprint('ALL TESTS PASSED')\n"}
+    ],
+    "verify_cmd": "python verify_math.py",
+    "assertions": {
+      "stop_reason": "final",
+      "failure_category": "success",
+      "tools_used": ["read_file", "patch_file"],
+      "tool_call_summary": {"ok": 2},
+      "file_contents": {"math_buggy.py": "def add(a, b):\n    return a * b\n"},
+      "verification_ok": false,
+      "verification_exit_code": 1,
+      "verification_timed_out": false,
+      "raw_model_outputs_absent_from_report": true
+    }
   }
 ]

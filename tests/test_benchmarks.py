@@ -16,7 +16,7 @@ from benchmarks.metrics import compute_metrics, markdown_summary
 def test_load_tasks_returns_all_cases():
     tasks = load_tasks()
 
-    assert len(tasks) == 10
+    assert len(tasks) == 12
     names = [t["name"] for t in tasks]
     assert "list_files_success" in names
     assert "read_file_success" in names
@@ -28,17 +28,19 @@ def test_load_tasks_returns_all_cases():
     assert "model_error_artifacts" in names
     assert "unknown_tool_rejected" in names
     assert "repeated_call_rejected" in names
+    assert "patch_and_verify_success" in names
+    assert "verify_fail_after_bad_patch" in names
     assert all("group" in t for t in tasks)
 
 
 def test_run_benchmark_all_cases_pass():
     result = run_benchmark()
 
-    assert result.total == 10
+    assert result.total == 12
     assert result.failed == 0, (
         f"Failed cases: {[c.name for c in result.cases if c.status != 'PASS']}"
     )
-    assert result.passed == 10
+    assert result.passed == 12
 
 
 def test_result_json_has_correct_structure():
@@ -50,7 +52,7 @@ def test_result_json_has_correct_structure():
     assert "failed" in data
     assert "metrics" in data
     assert "cases" in data
-    assert len(data["cases"]) == 10
+    assert len(data["cases"]) == 12
 
     for case in data["cases"]:
         assert "name" in case
@@ -61,6 +63,7 @@ def test_result_json_has_correct_structure():
         assert "failure_category" in case
         assert "artifacts_complete" in case
         assert "parser_retry_count" in case
+        assert "verification_ok" in case
         assert "assertions" in case
     text = json.dumps(data)
     assert "<tool>" not in text
@@ -133,8 +136,8 @@ def test_compute_metrics_from_benchmark_result():
     result = run_benchmark()
     metrics = compute_metrics(result)
 
-    assert metrics["total"] == 10
-    assert metrics["passed"] == 10
+    assert metrics["total"] == 12
+    assert metrics["passed"] == 12
     assert metrics["failed"] == 0
     assert metrics["pass_rate"] == 1.0
     assert metrics["artifact_completeness_rate"] == 1.0
@@ -142,6 +145,8 @@ def test_compute_metrics_from_benchmark_result():
     assert metrics["tool_guard_pass_rate"] == 1.0
     assert metrics["tool_governance_total"] == 4
     assert metrics["parser_retry_count_total"] == 1
+    assert metrics["verifier_pass_rate"] == 0.5
+    assert metrics["verification_total"] == 2
 
 
 def test_markdown_summary_contains_metrics_table():
@@ -243,7 +248,7 @@ def test_write_results_creates_metrics_json(tmp_path):
 
     assert output.exists()
     data = json.loads(output.read_text(encoding="utf-8"))
-    assert data["total"] == 10
+    assert data["total"] == 12
     assert data["failed"] == 0
     assert data["metrics"]["pass_rate"] == 1.0
     text = json.dumps(data)
@@ -260,6 +265,42 @@ def test_write_markdown_summary_creates_file(tmp_path):
     text = output.read_text(encoding="utf-8")
     assert "Mico Benchmark Summary" in text
     assert "Parser retry count" in text
+
+
+def test_verification_group_cases_pass():
+    tasks = [task for task in load_tasks() if task["group"] == "verification"]
+    result = run_benchmark(tasks)
+
+    assert result.total == 2
+    assert result.failed == 0
+    assert all(case.group == "verification" for case in result.cases)
+
+
+def test_patch_and_verify_success_case():
+    result = run_benchmark()
+    case = next(c for c in result.cases if c.name == "patch_and_verify_success")
+
+    assert case.status == "PASS"
+    assert case.stop_reason == "final"
+    assert case.failure_category == "success"
+    assert case.verification_ok is True
+
+
+def test_verify_fail_after_bad_patch_case():
+    result = run_benchmark()
+    case = next(c for c in result.cases if c.name == "verify_fail_after_bad_patch")
+
+    assert case.status == "PASS"
+    assert case.stop_reason == "final"
+    assert case.failure_category == "success"
+    assert case.verification_ok is False
+
+
+def test_markdown_summary_contains_verifier_pass_rate():
+    result = run_benchmark()
+    text = markdown_summary(result)
+
+    assert "Verifier pass rate" in text
 
 
 def test_benchmark_detects_failed_case():

@@ -18,6 +18,7 @@ class Mico:
         self._last_prompt_metadata = None
         self._model_output_parser = ModelOutputParser()
         self._last_parser_error_kind = None
+        self._last_task_state = None
 
     def ask(self, user_message):
         self.tool_executor.reset_run_state()
@@ -61,7 +62,7 @@ class Mico:
         self._last_prompt_metadata = bundle.metadata
         return bundle
 
-    def build_report(self, task_state):
+    def build_report(self, task_state, verification_result=None):
         tool_call_summary = {}
         last_error_kind = None
         changed_files = []
@@ -98,6 +99,10 @@ class Mico:
             report["prompt_metadata"] = self._last_prompt_metadata
         if self._last_parser_error_kind is not None:
             report["parser_error_kind"] = self._last_parser_error_kind
+        if verification_result is not None:
+            report["verification_ok"] = verification_result.ok
+            report["verification_exit_code"] = verification_result.exit_code
+            report["verification_timed_out"] = verification_result.timed_out
         return redact_artifact(report)
 
     @staticmethod
