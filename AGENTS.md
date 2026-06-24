@@ -4,7 +4,7 @@
 
 - 本文件只记录 `mico` 子仓库的差异化规则；全局协作规则见父目录 `../AGENTS.md`。
 - `mico` 是一个独立 git 仓库；所有 git 命令都必须在 `mico/` 目录内执行。
-- 当前目标是把 `mico` 尽快迭代成可写进简历、可面试深挖、可复现实验指标的本地 coding agent harness。
+- 当前目标是把 `mico` 迭代成一个可以真实创建、修改、运行和验证代码的本地 coding agent。
 - git commit 信息建议使用中文说明，并保留 Conventional Commits 类型前缀，例如 `feat: 增加安全补丁工具`。
 
 ## 当前实现边界
@@ -22,14 +22,29 @@
   - `search`
   - `patch_file`：精确文本替换，受 approval policy 控制。
 
-## 暂不实现
+## P1 允许实现
 
-- 不把真实模型 API 作为默认配置。
-- 不加入 `write_file` 工具或 shell 工具。
-- 不做 git 自动提交。
+- P1 允许实现 `write_file(path, content)` 和 `run_command(argv, timeout=30)`。
+- `run_command` 不是通用 shell 字符串工具；输入必须是非空 `list[str]`。
+- 允许将真实模型 API 作为默认配置，方便直接运行真实 agent。
+
+## Codex 安全审查要求
+
+Codex 在接受 P1 实现前必须审查以下内容：
+
+- `run_command` 是否使用 argv list（不是 command string）。
+- `run_command` 是否使用 `shell=False`。
+- `run_command` 的 cwd 是否固定在 workspace root。
+- approval policy 是否能拦截 `write_file` 和 `run_command`。
+- timeout、stdout/stderr 截断、路径逃逸保护是否到位。
+
+## 仍然禁止
+
+- 不做自动 git commit。
 - 不做交互式 REPL、Web UI、后台任务或任务队列。
-- 不做长期记忆、多 agent、复杂权限 UI 或上下文压缩。
-- 以上暂不实现范围以 `analysis/mico-resume-project-roadmap.md` 的阶段边界为准；只有路线文档和 Codex 明确指定阶段任务时，才实现会话内结构化记忆、上下文治理或 checkpoint/resume。
+- 不做多 agent 系统。
+- 不做复杂权限 UI。
+- 不做 checkpoint / memory / context governance，除非后续真实任务暴露明确痛点。
 
 ## 参考项目使用
 

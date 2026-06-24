@@ -18,8 +18,8 @@
 
 ## 当前项目状态
 
-- `mico` 是一个面向简历项目化迭代的本地 coding agent harness。
-- 当前主路线见 `analysis/mico-resume-project-roadmap.md`，目标是形成可演示、可测试、可复盘、可量化的 Verified Coding Agent Harness。
+- `mico` 是一个本地 coding agent，目标是在受控 workspace 内创建、修改、运行和验证代码。
+- 当前主路线见 `analysis/mico-resume-project-roadmap.md`。
 - 默认 provider 是 `FakeModelClient`，可选真实模型 provider 是 `openai-compatible`。
 - 核心闭环已经存在：
   - CLI 接收任务；
@@ -45,15 +45,35 @@
 
 所有路径必须限制在 workspace 内，禁止 `..` 或绝对路径逃逸。`patch_file` 要求 `old_text` 在文件中恰好出现一次。
 
-## 严格禁止加入
+## P1 实现约束
 
-- 真实模型 API 作为默认配置。
-- `write_file` 工具。
-- shell 工具。
-- git 自动提交。
-- 交互式 REPL。
-- 多 agent。
-- 复杂权限 UI。
+- 可以实现 `write_file(path, content)`。
+- 可以实现 `run_command(argv, timeout=30)`。
+- `run_command` 输入必须是非空 `list[str]`。
+- P1 不支持 command string。
+- P1 不支持 pipe、redirect、subshell、glob expansion。
+- P1 不使用 `shell=True`。
+- 如果实现需要 shell 语义，Claude Code 必须停止并报告，不得自行改成 shell 工具。
+
+推荐实现形态：
+
+```python
+subprocess.run(
+    argv,
+    cwd=workspace_root,
+    timeout=timeout,
+    capture_output=True,
+    text=True,
+    shell=False,
+)
+```
+
+## 仍然禁止
+
+- 不做自动 git commit。
+- 不做交互式 REPL。
+- 不做多 agent。
+- 不做复杂权限 UI。
 - 后台任务、任务队列或 Web UI。
 
 说明：会话内结构化记忆、上下文治理、checkpoint/resume 属于路线文档中的后续阶段，不等同于长期知识库或复杂产品化能力；只有 Codex 明确指定阶段任务时才实现。
