@@ -28,6 +28,9 @@ class CaseResult:
     stop_reason: str
     failure_category: str
     assertions: dict
+    group: str = "harness_regression"
+    artifacts_complete: bool = False
+    parser_retry_count: int = 0
 
 
 @dataclass
@@ -95,6 +98,11 @@ def _run_case(task):
         state = json.loads(state_text)
         report = json.loads(report_text)
         trace_events = [json.loads(line) for line in trace_text.splitlines() if line.strip()]
+        parser_retry_count = sum(
+            1
+            for event in trace_events
+            if event.get("event") == "model_parsed" and event.get("kind") == "retry"
+        )
 
         file_contents = {}
         for relative_path in task.get("assertions", {}).get("file_contents", {}):
@@ -108,6 +116,8 @@ def _run_case(task):
             "trace_events": trace_events,
             "history": list(agent.history),
             "artifacts_exist": artifacts_exist,
+            "artifacts_complete": all(artifacts_exist.values()),
+            "parser_retry_count": parser_retry_count,
             "file_contents": file_contents,
             "final_answer": final_answer,
             "artifact_text": {
@@ -200,6 +210,7 @@ def run_benchmark(tasks=None):
 
     for task in tasks:
         name = task["name"]
+        group = task.get("group", "harness_regression")
         try:
             evidence = _run_case(task)
             state = evidence["state"]
@@ -219,6 +230,9 @@ def run_benchmark(tasks=None):
                     stop_reason=state.get("stop_reason", ""),
                     failure_category=report.get("failure_category", ""),
                     assertions={"errors": errors},
+                    group=group,
+                    artifacts_complete=evidence["artifacts_complete"],
+                    parser_retry_count=evidence["parser_retry_count"],
                 )
             )
         except Exception as exc:
@@ -231,6 +245,9 @@ def run_benchmark(tasks=None):
                     stop_reason="",
                     failure_category="",
                     assertions={"errors": [str(exc)]},
+                    group=group,
+                    artifacts_complete=False,
+                    parser_retry_count=0,
                 )
             )
 
@@ -238,17 +255,23 @@ def run_benchmark(tasks=None):
 
 
 def result_to_dict(result):
+    from .metrics import compute_metrics
+
     return {
         "total": result.total,
         "passed": result.passed,
         "failed": result.failed,
+        "metrics": compute_metrics(result),
         "cases": [
             {
                 "name": case.name,
+                "group": case.group,
                 "status": case.status,
                 "run_id": case.run_id,
                 "stop_reason": case.stop_reason,
                 "failure_category": case.failure_category,
+                "artifacts_complete": case.artifacts_complete,
+                "parser_retry_count": case.parser_retry_count,
                 "assertions": case.assertions,
             }
             for case in result.cases
@@ -263,6 +286,15 @@ def write_results(result, path):
         json.dumps(result_to_dict(result), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    return path
+
+
+def write_markdown_summary(result, path):
+    from .metrics import markdown_summary
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(markdown_summary(result), encoding="utf-8")
     return path
 
 

@@ -64,6 +64,9 @@ class Mico:
     def build_report(self, task_state):
         tool_call_summary = {}
         last_error_kind = None
+        changed_files = []
+        changed_file_set = set()
+        patches_applied = 0
         for item in self.history:
             if item.get("role") != "tool":
                 continue
@@ -71,6 +74,12 @@ class Mico:
             tool_call_summary[error_kind] = tool_call_summary.get(error_kind, 0) + 1
             if error_kind != "ok":
                 last_error_kind = error_kind
+            if item.get("name") == "patch_file" and item.get("metadata", {}).get("ok") is True:
+                patches_applied += 1
+                path = item.get("args", {}).get("path")
+                if path and path not in changed_file_set:
+                    changed_file_set.add(path)
+                    changed_files.append(path)
         available_tools = [item["name"] for item in self.tool_executor.tool_catalog() if item["allowed"]]
         report = {
             "artifacts_version": "1",
@@ -82,6 +91,8 @@ class Mico:
             "available_tools": available_tools,
             "restricted_tools": self.tool_executor.restricted_tools(),
             "tool_call_summary": tool_call_summary,
+            "changed_files": changed_files,
+            "patches_applied": patches_applied,
         }
         if self._last_prompt_metadata is not None:
             report["prompt_metadata"] = self._last_prompt_metadata

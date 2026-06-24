@@ -1,6 +1,7 @@
 [
   {
     "name": "list_files_success",
+    "group": "harness_regression",
     "description": "list_files returns workspace contents",
     "fake_outputs": [
       "<tool>{\"name\":\"list_files\",\"args\":{\"path\":\".\"}}</tool>",
@@ -20,6 +21,7 @@
   },
   {
     "name": "read_file_success",
+    "group": "harness_regression",
     "description": "read_file returns file content",
     "fake_outputs": [
       "<tool>{\"name\":\"read_file\",\"args\":{\"path\":\"hello.txt\"}}</tool>",
@@ -39,6 +41,7 @@
   },
   {
     "name": "search_success",
+    "group": "harness_regression",
     "description": "search finds matching text",
     "fake_outputs": [
       "<tool>{\"name\":\"search\",\"args\":{\"pattern\":\"needle\"}}</tool>",
@@ -58,6 +61,7 @@
   },
   {
     "name": "patch_file_success",
+    "group": "harness_regression",
     "description": "patch_file replaces text and returns success",
     "fake_outputs": [
       "<tool>{\"name\":\"patch_file\",\"args\":{\"path\":\"code.py\",\"old_text\":\"old\",\"new_text\":\"new\"}}</tool>",
@@ -77,6 +81,7 @@
   },
   {
     "name": "patch_file_denied",
+    "group": "tool_governance",
     "description": "patch_file rejected under approval=never",
     "approval_policy": "never",
     "fake_outputs": [
@@ -98,6 +103,7 @@
   },
   {
     "name": "path_escape_rejected",
+    "group": "tool_governance",
     "description": "path escaping workspace is rejected",
     "fake_outputs": [
       "<tool>{\"name\":\"read_file\",\"args\":{\"path\":\"../../etc/passwd\"}}</tool>",
@@ -115,6 +121,7 @@
   },
   {
     "name": "malformed_retry_then_success",
+    "group": "harness_regression",
     "description": "malformed model output retried, then succeeds",
     "fake_outputs": [
       "not xml at all",
@@ -136,6 +143,7 @@
   },
   {
     "name": "model_error_artifacts",
+    "group": "harness_regression",
     "description": "model error produces state, trace, and report artifacts",
     "error_on_first": true,
     "workspace_setup": [],
@@ -143,6 +151,45 @@
       "stop_reason": "model_error",
       "failure_category": "model_error",
       "tools_used": []
+    }
+  },
+  {
+    "name": "unknown_tool_rejected",
+    "group": "tool_governance",
+    "description": "calling a nonexistent tool is rejected with unknown_tool error",
+    "fake_outputs": [
+      "<tool>{\"name\":\"no_such_tool\",\"args\":{}}</tool>",
+      "<final>could not use tool</final>"
+    ],
+    "workspace_setup": [],
+    "assertions": {
+      "stop_reason": "final",
+      "failure_category": "success",
+      "tools_used": ["no_such_tool"],
+      "tool_call_summary": {"unknown_tool": 1},
+      "history_contains": ["unknown tool"],
+      "raw_model_outputs_absent_from_report": true
+    }
+  },
+  {
+    "name": "repeated_call_rejected",
+    "group": "tool_governance",
+    "description": "repeated identical tool call is rejected",
+    "fake_outputs": [
+      "<tool>{\"name\":\"list_files\",\"args\":{\"path\":\".\"}}</tool>",
+      "<tool>{\"name\":\"list_files\",\"args\":{\"path\":\".\"}}</tool>",
+      "<final>done</final>"
+    ],
+    "workspace_setup": [
+      {"path": "hello.txt", "content": "hello world\n"}
+    ],
+    "assertions": {
+      "stop_reason": "final",
+      "failure_category": "success",
+      "tools_used": ["list_files", "list_files"],
+      "tool_call_summary": {"ok": 1, "repeated_call": 1},
+      "history_contains": ["repeated identical tool call"],
+      "raw_model_outputs_absent_from_report": true
     }
   }
 ]

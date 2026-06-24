@@ -42,6 +42,7 @@
 - Claude Code 负责实现初稿、补测试、根据失败修复和整理说明。
 - Codex 负责任务边界、范围控制、架构审查、测试验收和最终接受。
 - Codex 调用 Claude Code 时必须给出明确、可执行、范围有限的任务。
+- 如果 Codex 调用 Claude Code 失败、超时、被权限拦截或没有产出可用改动，Codex 不应直接替 Claude Code 完成实现；应先向用户说明失败原因，并询问下一步是重试 Claude Code、调整任务范围，还是授权 Codex 接手。
 - 不要把本机 Claude Code session id、固定 resume 命令或一次性运行句柄写入仓库文件；这类信息属于本地运行态。
 - 如果需要从新会话继续，先阅读本文件、`CLAUDE.md`、`analysis/mico-resume-project-roadmap.md`，再查看 `git status --short` 和 `git diff`。
 - `analysis/mico-improvement-framework.md` 保留为历史技术分析，不再作为后续主执行路线。

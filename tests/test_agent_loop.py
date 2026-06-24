@@ -475,6 +475,69 @@ def test_report_includes_restricted_tools_and_tool_call_summary(tmp_path):
     assert report["artifacts_version"] == "1"
     # Task succeeded overall (model returned <final>), tool denial is in tool_call_summary
     assert report["failure_category"] == "success"
+    assert report["changed_files"] == []
+    assert report["patches_applied"] == 0
+
+
+def test_report_includes_changed_files_for_successful_patch(tmp_path):
+    (tmp_path / "code.py").write_text("old\n", encoding="utf-8")
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"patch_file","args":{"path":"code.py","old_text":"old","new_text":"new"}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    agent.ask("fix code")
+
+    run_dirs = list((tmp_path / ".mico" / "runs").iterdir())
+    report = json.loads((run_dirs[0] / "report.json").read_text(encoding="utf-8"))
+    assert report["changed_files"] == ["code.py"]
+    assert report["patches_applied"] == 1
+
+
+def test_report_changed_files_deduplicates_successful_patches(tmp_path):
+    (tmp_path / "code.py").write_text("one\n", encoding="utf-8")
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"patch_file","args":{"path":"code.py","old_text":"one","new_text":"two"}}</tool>',
+            '<tool>{"name":"patch_file","args":{"path":"code.py","old_text":"two","new_text":"three"}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    agent.ask("fix code twice")
+
+    run_dirs = list((tmp_path / ".mico" / "runs").iterdir())
+    report = json.loads((run_dirs[0] / "report.json").read_text(encoding="utf-8"))
+    assert report["changed_files"] == ["code.py"]
+    assert report["patches_applied"] == 2
+
+
+def test_report_ignores_failed_patch_for_changed_files(tmp_path):
+    (tmp_path / "code.py").write_text("old\n", encoding="utf-8")
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"patch_file","args":{"path":"code.py","old_text":"missing","new_text":"new"}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    agent.ask("fix code")
+
+    run_dirs = list((tmp_path / ".mico" / "runs").iterdir())
+    report = json.loads((run_dirs[0] / "report.json").read_text(encoding="utf-8"))
+    assert report["changed_files"] == []
+    assert report["patches_applied"] == 0
 
 
 def test_max_steps_allows_final_after_last_tool(tmp_path):

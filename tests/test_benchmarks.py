@@ -6,15 +6,17 @@ from benchmarks.runner import (
     load_tasks,
     result_to_dict,
     run_benchmark,
+    write_markdown_summary,
     write_results,
     _check_assertions,
 )
+from benchmarks.metrics import compute_metrics, markdown_summary
 
 
 def test_load_tasks_returns_all_cases():
     tasks = load_tasks()
 
-    assert len(tasks) == 8
+    assert len(tasks) == 10
     names = [t["name"] for t in tasks]
     assert "list_files_success" in names
     assert "read_file_success" in names
@@ -24,16 +26,19 @@ def test_load_tasks_returns_all_cases():
     assert "path_escape_rejected" in names
     assert "malformed_retry_then_success" in names
     assert "model_error_artifacts" in names
+    assert "unknown_tool_rejected" in names
+    assert "repeated_call_rejected" in names
+    assert all("group" in t for t in tasks)
 
 
 def test_run_benchmark_all_cases_pass():
     result = run_benchmark()
 
-    assert result.total == 8
+    assert result.total == 10
     assert result.failed == 0, (
         f"Failed cases: {[c.name for c in result.cases if c.status != 'PASS']}"
     )
-    assert result.passed == 8
+    assert result.passed == 10
 
 
 def test_result_json_has_correct_structure():
@@ -43,15 +48,19 @@ def test_result_json_has_correct_structure():
     assert "total" in data
     assert "passed" in data
     assert "failed" in data
+    assert "metrics" in data
     assert "cases" in data
-    assert len(data["cases"]) == 8
+    assert len(data["cases"]) == 10
 
     for case in data["cases"]:
         assert "name" in case
+        assert "group" in case
         assert "status" in case
         assert "run_id" in case
         assert "stop_reason" in case
         assert "failure_category" in case
+        assert "artifacts_complete" in case
+        assert "parser_retry_count" in case
         assert "assertions" in case
     text = json.dumps(data)
     assert "<tool>" not in text
@@ -82,6 +91,67 @@ def test_patch_file_denied_case_has_correct_fields():
     assert case.status == "PASS"
     assert case.stop_reason == "final"
     assert case.failure_category == "success"
+
+
+def test_tool_governance_group_cases_pass():
+    tasks = [task for task in load_tasks() if task["group"] == "tool_governance"]
+    result = run_benchmark(tasks)
+
+    assert result.total == 4
+    assert result.failed == 0
+    assert all(case.group == "tool_governance" for case in result.cases)
+
+
+def test_unknown_tool_case_has_correct_fields():
+    result = run_benchmark()
+    case = next(c for c in result.cases if c.name == "unknown_tool_rejected")
+
+    assert case.status == "PASS"
+    assert case.stop_reason == "final"
+    assert case.failure_category == "success"
+    assert case.group == "tool_governance"
+
+
+def test_repeated_call_case_has_correct_fields():
+    result = run_benchmark()
+    case = next(c for c in result.cases if c.name == "repeated_call_rejected")
+
+    assert case.status == "PASS"
+    assert case.stop_reason == "final"
+    assert case.failure_category == "success"
+    assert case.group == "tool_governance"
+
+
+def test_malformed_retry_case_records_parser_retry_count():
+    result = run_benchmark()
+    case = next(c for c in result.cases if c.name == "malformed_retry_then_success")
+
+    assert case.parser_retry_count == 1
+
+
+def test_compute_metrics_from_benchmark_result():
+    result = run_benchmark()
+    metrics = compute_metrics(result)
+
+    assert metrics["total"] == 10
+    assert metrics["passed"] == 10
+    assert metrics["failed"] == 0
+    assert metrics["pass_rate"] == 1.0
+    assert metrics["artifact_completeness_rate"] == 1.0
+    assert metrics["failure_attribution_coverage"] == 1.0
+    assert metrics["tool_guard_pass_rate"] == 1.0
+    assert metrics["tool_governance_total"] == 4
+    assert metrics["parser_retry_count_total"] == 1
+
+
+def test_markdown_summary_contains_metrics_table():
+    result = run_benchmark()
+    text = markdown_summary(result)
+
+    assert "# Mico Benchmark Summary" in text
+    assert "| Pass rate | 100.00% |" in text
+    assert "| Tool guard pass rate | 100.00% |" in text
+    assert "malformed_retry_then_success" in text
 
 
 def test_check_assertions_detects_wrong_stop_reason():
@@ -173,12 +243,23 @@ def test_write_results_creates_metrics_json(tmp_path):
 
     assert output.exists()
     data = json.loads(output.read_text(encoding="utf-8"))
-    assert data["total"] == 8
+    assert data["total"] == 10
     assert data["failed"] == 0
+    assert data["metrics"]["pass_rate"] == 1.0
     text = json.dumps(data)
     assert "<tool>" not in text
     assert "<final>" not in text
     assert "not xml at all" not in text
+
+
+def test_write_markdown_summary_creates_file(tmp_path):
+    result = run_benchmark()
+    output = write_markdown_summary(result, tmp_path / "results" / "latest.md")
+
+    assert output.exists()
+    text = output.read_text(encoding="utf-8")
+    assert "Mico Benchmark Summary" in text
+    assert "Parser retry count" in text
 
 
 def test_benchmark_detects_failed_case():
