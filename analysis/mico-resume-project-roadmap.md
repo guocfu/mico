@@ -1,602 +1,353 @@
-# Mico 简历项目化架构路线
+# Mico 实用型 Local Coding Agent 路线
 
 > 日期：2026-06-24
-> 状态：后续主执行路线；已按 P1/P2 实现情况和 Claude Code 架构复核建议校准
-> 说明：`analysis/mico-improvement-framework.md` 保留为历史技术分析；后续功能迭代、Claude Code 实现任务和 Codex 审查，优先以本文为准。
+> 状态：后续主执行路线
+> 说明：`analysis/mico-improvement-framework.md` 保留为历史技术分析；`analysis/claude code.md` 和 Opus 4.8 架构评审作为本次重定位参考。后续功能迭代、Claude Code 实现任务和 Codex 审查，优先以本文为准。
 
 ## 1. 项目定位
 
-`mico` 不再定位为简单的 tiny local coding agent demo，而应定位为：
+`mico` 的目标是做一个**能在本地仓库里实际完成代码任务的 CLI coding agent**。
 
-**面向本地代码修改任务的 Verified Coding Agent Harness。**
+它首先要能用，其次才是好测试、好复盘、好写进简历。当前项目已有模型调用、工具循环、workspace 沙箱、运行工件和 benchmark 基础，但缺少两个实际 coding agent 的最低能力：
 
-核心目标不是堆叠工具数量，而是建立一条可演示、可测试、可复盘、可写进简历的 agent 工程链路：
+- 创建新文件。
+- 运行项目命令并根据失败输出继续修复。
 
-用户任务 -> 分层 Prompt -> 模型决策 -> 工具治理 -> 文件修改 -> 验证执行 -> 运行工件 -> Benchmark 指标 -> 简历材料
-
-最终项目应能支撑以下工程能力域；P6 简历材料再压缩成 6 条高密度 bullet，不要求这里的能力域数量与最终简历条数一一对应：
-
-1. Agent Harness 架构设计。
-2. 工具安全与运行治理。
-3. 验证型 Coding Agent 闭环。
-4. 真实模型后端效果评估。
-5. 上下文治理。
-6. 结构化记忆系统。
-7. Checkpoint / Resume。
-8. 评测与审计闭环。
-
-所有简历数字必须来自 benchmark、demo runner 或运行工件汇总，不在文档中手写编造。
-
-旧 `mico-improvement-framework.md` 中经过代码校准的真实约束仍然有效，尤其是：
-
-- `search` 当前通过固定 argv 调用 `rg` 子进程；这是白名单只读实现，不等同于开放 shell 工具。
-- 当前 CLI 是一次性运行模式；若后续复用同一个 `Mico` 实例做多轮任务，必须先处理 history 串台问题。
-- P2.5 的“多轮任务”先定义为 scripted follow-up scenario 或 benchmark scenario，不等同于交互式 REPL，也不默认复用裸 `Mico.history`。
-- 重复调用、模型异常、parser malformed 输出等治理点应继续通过 report 和 benchmark 指标化。
-
-## 2. 目标简历描述
-
-**Mico：本地代码智能体 Harness**
-
-核心技术：Python、Agent Harness、Tool Calling、Context Management、Structured Memory、Checkpoint / Resume、Tool Governance、Run Trace、Benchmark
-
-项目描述：
-
-面向本地代码修改任务开发轻量级 coding agent harness，围绕模型接入、工具调用、上下文预算、结构化记忆、任务恢复、工具安全治理、验证执行、运行审计和评测闭环做系统化设计，重点解决多步代码任务中 prompt 膨胀、重复读文件、工具副作用不可控、修改不可验证、状态丢失和结果难复盘的问题。
-
-目标简历 bullet 建议收敛为 6 条，最终数字必须从实际 summary 中生成：
-
-1. **Agent Harness 架构设计**：统一 CLI、模型 provider、agent loop、工具执行、状态管理和运行工件，形成 deterministic regression baseline。
-2. **工具安全与运行治理**：把模型文件操作收敛到受控工具边界，覆盖 path escape、approval denied、unknown tool、repeated call、model error、malformed output 等场景。
-3. **验证型 Coding Agent 闭环**：支持读代码、补丁修改、显式验证命令、`verification.json` 和 report 指标，形成可演示 demo。
-4. **真实模型后端效果评估**：基于 OpenAI-compatible provider 和固定任务集输出 real model quality summary，明确区分 fake regression 与真实模型实验。
-5. **上下文治理与结构化记忆**：通过 prompt 分层、预算控制、prompt cache-aware 结构和会话内 memory，量化 prompt 压缩与重复读文件减少。
-6. **Checkpoint / Resume 与审计闭环**：用 checkpoint、workspace fingerprint、run trace 和 benchmark summary 支撑恢复、漂移检测和面试复盘。
-
-## 3. 总体架构
-
-推荐把 `mico` 稳定为六层架构，后续实现按层推进，而不是围绕零散文件补功能。
-
-### 3.1 Interface Layer
-
-负责用户入口和运行配置。
-
-当前核心模块：
-
-- `mico/cli.py`
-
-后续可选模块：
-
-- `mico/commands.py`
-
-职责：
-
-- 解析 prompt、workspace、provider、approval、max steps。
-- 后续支持 `--verify-cmd`、`--verify-timeout`、`--resume`、benchmark group 等参数。
-- 保持 CLI 是编排入口，不把验证命令暴露给模型作为工具。
-
-简历价值：
-
-- 体现本地 agent 可用性和端到端运行能力。
-
-### 3.2 Harness Runtime Layer
-
-负责 agent 的总装、主循环和生命周期。
-
-核心模块：
-
-- `mico/runtime.py`
-- `mico/agent_loop.py`
-- `mico/parser.py`
-- `mico/providers.py`
-
-职责：
-
-- 组装 model client、workspace、tool executor、prompt builder、run store。
-- 控制主循环：model request、parse output、execute tool、update history/state、finish or stop。
-- 标准化终止和失败归因：success、step limit、malformed model output、model error、tool error。
-- 保证 `state.json`、`trace.jsonl`、`report.json` 在成功和失败路径上都能落盘。
-
-简历价值：
-
-- 对应「Agent Harness 架构设计」。
-
-### 3.3 Tool Governance Layer
-
-工具安全与运行治理是一级核心能力，不是附属安全补丁。
-
-核心模块：
-
-- `mico/tools.py`
-- `mico/tool_executor.py`
-- `mico/workspace.py`
-- `mico/security.py`
-
-职责：
-
-- 用 `ToolSpec` 描述工具能力：read-only、requires approval、concurrency safe、max result chars。
-- 统一工具调用流水线：工具存在性检查、参数校验、workspace 沙箱、approval policy、repeated call guard、执行结果标准化、trace/report 脱敏。
-- 明确区分只读工具和修改型工具。
-- 在 report 中沉淀 `tool_call_summary`、`failure_category`、`changed_files`、`patches_applied`；其中 `changed_files` 和 `patches_applied` 已由 P1 指标化。
-
-简历价值：
-
-- 对应「工具安全与运行治理」。
-- 当前已有基础，应优先转化为 benchmark 指标。
-
-### 3.4 Context & Memory Layer
-
-这层负责让项目具备面试深挖点。
-
-核心模块：
-
-- `mico/prompt.py`
-- 后续新增 `mico/memory.py`
-- 后续可新增 `mico/context_budget.py`
-
-职责：
-
-- Prompt 分层：stable prefix、tool catalog、runtime policy、workspace summary、structured memory、recent history、current request。
-- Prompt cache-aware 结构：稳定前缀放在 prompt 最前方，尽量让 tool catalog、runtime policy、固定输出协议和不变上下文保持顺序稳定。
-- 记录 prompt section hash、cacheable prefix chars 和 prompt section chars；只有当真实 provider 返回 cached token usage 时，才记录真实 cache hit 指标。
-- 上下文预算控制：current request 不裁剪，优先裁 history，再裁 memory，再裁 workspace summary。
-- 结构化记忆：`task_summary`、`recent_files`、`file_summaries`、`episodic_notes`。
-
-简历价值：
-
-- 对应「上下文治理」和「结构化记忆系统」。
-- 这两项必须通过 benchmark 证明收益，而不是只声明功能存在。
-
-### 3.5 Verification & Recovery Layer
-
-负责把 agent 从「会改文件」升级成「能验证、能恢复」。
-
-后续模块：
-
-- `mico/verification.py`
-- `mico/checkpoint.py`
-
-职责：
-
-- `verification.py`：执行用户显式传入的 `--verify-cmd`，生成 `verification.json`，记录 exit code、duration、stdout/stderr tail、timeout。
-- `checkpoint.py`：保存 task state、history summary、memory、changed files、workspace fingerprint，支持从 run id resume，并检测 workspace drift。
-
-验证命令属于 CLI 编排能力，不属于模型工具能力。实现时必须满足：
-
-- 不使用 `shell=True`。
-- 用 argv 列表执行命令。
-- 工作目录固定为 workspace root。
-- 设置超时并在超时时终止进程。
-- stdout/stderr 只写截断后的 tail，不进入 prompt。
-
-简历价值：
-
-- 对应「验证型 Coding Agent 闭环」和「Checkpoint / Resume」。
-
-### 3.6 Evidence & Benchmark Layer
-
-这是简历数字的来源，优先级要前置。
-
-核心模块：
-
-- `mico/state.py`
-- `benchmarks/runner.py`
-- `benchmarks/live.py`
-- `benchmarks/metrics.py`
-
-职责：
-
-- 运行工件：`state.json`、`trace.jsonl`、`report.json`、后续 `verification.json`、`checkpoint.json`。
-- Benchmark 分组：harness regression、tool governance、verification、quality、context、memory、resume。
-- 指标输出：pass rate、verifier pass rate、artifact completeness、failure attribution coverage、real provider pass rate、model error rate、prompt compression ratio、cacheable prefix chars、repeated file reads、resume success rate、workspace drift detection rate。
-- 区分三类评测：
-  - **Harness regression**：使用 `FakeModelClient`，验证 harness、工具治理、工件落盘和错误归因是否稳定。
-  - **Verification regression**：使用 fake provider 固定输出，验证 `--verify-cmd`、`verification.json` 和 report 指标是否稳定。
-  - **Quality experiment**：使用真实 OpenAI-compatible provider 和固定任务集，产出简历可用的真实模型表现数据，例如 real provider pass rate、verifier pass rate、模型错误率、平均耗时、重复读文件减少、prompt 压缩收益和 resume 成功率。
-
-简历价值：
-
-- 对应「评测与审计闭环」。
-- 所有简历数字都应从这里生成；简历中应明确区分 deterministic regression 数字和 real model experiment 数字。
-
-## 4. 核心贡献点与指标口径
-
-### 4.1 Agent Harness 架构设计
-
-目标：
-
-- 统一 CLI、模型 provider、agent loop、工具执行、状态管理和运行工件。
-- 支持 fake provider 和 OpenAI-compatible provider。
-- 形成可复盘的运行链路。
-
-候选指标：
-
-- 运行工件完整率。
-- 成功/失败路径 report 生成率。
-- harness regression pass rate。
-
-### 4.2 工具安全与运行治理
-
-目标：
-
-- 把模型所有文件系统动作收敛到工具边界内。
-- 对 path escape、approval denied、unknown tool、validation error、repeated call、model error、malformed output 做稳定归因。
-
-候选指标：
-
-- tool guard pass rate。
-- failure attribution coverage。
-- artifact completeness。
-
-### 4.3 验证型 Coding Agent 闭环
-
-目标：
-
-- 让 agent 具备「读项目 -> 改代码 -> 运行用户指定验证 -> 生成证据」的可展示闭环。
-- 验证命令由 CLI 显式传入，不作为模型工具开放。
-
-候选指标：
-
-- verifier pass rate。
-- changed files 记录准确率。
-- patches applied 记录准确率。
-
-### 4.4 真实模型后端效果评估
-
-目标：
-
-- 使用 OpenAI-compatible provider 跑固定 coding task 集合，产出可复现的真实模型质量 summary。
-- 明确区分 fake provider deterministic regression 与 real provider quality experiment，避免把 harness 稳定性等同于模型真实能力。
-- 支持比较不同模型、不同 base URL 或不同 prompt 策略下的 pass rate、verifier pass rate、模型错误率和耗时。
-
-候选指标：
-
-- real provider pass rate。
-- real provider verifier pass rate。
-- model error rate。
-- average run duration。
-- total model calls。
-- provider/model/base URL 配置摘要。
-
-边界：
-
-- 先只做 OpenAI-compatible 这一类真实 provider，不做多 provider 完整适配。
-- 不把真实模型 API key 写入仓库；`.env` 只作为本地配置入口。
-- 所有可写进简历的真实模型数字必须来自 live summary 或运行工件汇总。
-
-### 4.5 上下文治理
-
-目标：
-
-- 在 prompt 分层基础上做预算控制，减少长链路任务 prompt 膨胀。
-- 保证 current request 不被裁剪。
-- 这里的上下文治理是显式分层裁剪，有固定优先级和可测指标；不做无策略的自动压缩或复杂摘要系统。
-- 为 prompt cache 预留结构：稳定 prefix、section hash、cacheable prefix chars 和可选 cached token usage。
-
-候选指标：
-
-- 平均 prompt 长度。
-- prompt compression ratio。
-- cacheable prefix chars。
-- cached token usage（仅当 provider 返回）。
-- 预算内完成率。
-
-### 4.6 结构化记忆系统
-
-目标：
-
-- 用会话内 structured memory 减少 follow-up 任务中重复读文件。
-- 暂不做长期知识库。
-
-候选指标：
-
-- repeated file reads。
-- follow-up 任务工具调用数。
-- memory hit rate。
-
-### 4.7 Checkpoint / Resume
-
-目标：
-
-- 支持从 run id 恢复任务状态。
-- 识别 workspace drift，避免基于过期状态继续执行。
-
-候选指标：
-
-- resume success rate。
-- workspace drift detection rate。
-- checkpoint artifact completeness。
-
-### 4.8 评测与审计闭环
-
-目标：
-
-- benchmark 不只验证能跑，还要生产简历指标。
-- README、`docs/resume.md` 和 `docs/demo-guide.md` 引用真实 summary。
-
-候选指标：
-
-- benchmark group pass rate。
-- metrics summary 生成率。
-- run artifact 可复盘率。
-
-### 4.9 当前指标状态口径
-
-当前已经有代码或验收支撑的指标，应在 P6 简历材料中作为 deterministic regression baseline 使用：
-
-| 指标 | 当前状态 | 口径 |
-| --- | --- | --- |
-| deterministic regression pass rate | 已实现 | `python -m benchmarks` 的 `passed / total`；当前 P2 验收为 `12/12` |
-| artifact completeness rate | 已实现 | benchmark case 中 `state.json`、`trace.jsonl`、`report.json` 全部存在的比例 |
-| failure attribution coverage | 已实现 | `failure_category != "unknown"` 的 case 比例 |
-| tool guard pass rate | 已实现 | `tool_governance` group 的 pass rate；当前 P2 验收为 `4/4` |
-| verifier pass rate | 已实现 deterministic 口径 | verification group 中验证命令通过比例；当前 fake regression 为 `1/2 = 0.5` |
-| verification total | 已实现 | verification group case 数；当前为 `2` |
-| real provider pass rate | 待 P2.5 | 真实 OpenAI-compatible provider 固定任务集的 pass rate |
-| prompt compression ratio | 待 P3 | 开启预算控制前后 prompt chars 对比 |
-| repeated file reads | 待 P4 | follow-up scenario 中重复 `read_file` 次数 |
-| resume success rate | 待 P5 | resume benchmark 成功恢复并完成任务的比例 |
-
-注意：`100%` deterministic regression baseline 只能说明 harness 和固定 fake 输出路径稳定，不能直接当作真实模型质量指标。
-
-## 5. 目标项目结构
+目标闭环：
 
 ```text
-mico/
-  mico/
-    cli.py
-    runtime.py
-    agent_loop.py
-    prompt.py
-    parser.py
-    providers.py
-    tools.py
-    tool_executor.py
-    workspace.py
-    security.py
-    state.py
-    verification.py        # P2 新增
-    memory.py              # P4 新增
-    checkpoint.py          # P5 新增
-  benchmarks/
-    tasks.json
-    quality_tasks.json     # P2.5 新增
-    verify_tasks.json      # P2 新增
-    context_tasks.json     # P3 新增
-    memory_tasks.json      # P4 新增
-    resume_tasks.json      # P5 新增
-    runner.py
-    live.py                # P2.5 强化
-    metrics.py
-    results/
-  examples/
-    tiny-python-bug/       # P2 新增
-    multi-turn-follow-up/  # P2.5 新增
-    multi-file-edit/       # 后续按需新增
-    follow-up-memory/      # P4 新增
-  docs/
-    resume.md              # P6 新增
-    demo-guide.md          # P6 新增
-    model-eval.md          # P6 新增
-  analysis/
-    mico-resume-project-roadmap.md
-    mico-improvement-framework.md
+用户任务
+  -> 模型理解任务
+  -> 工具读取/搜索代码
+  -> 创建或修改文件
+  -> 运行测试或验证命令
+  -> 根据失败输出继续修复
+  -> 生成 trace/state/report/verification 工件
 ```
 
-## 6. 推荐执行顺序
+当前应避免继续扩大评测框架。benchmark 和 metrics 保留为回归质量证明，但不再主导产品方向。
 
-### P0：建立新路线文档
+## 2. 产品原则
 
-产物：
+### 2.1 先做能工作的 agent
 
-- `analysis/mico-resume-project-roadmap.md`。
-- 更新 `AGENTS.md` 和 `CLAUDE.md`，让后续上下文恢复优先读取新路线文档。
+路线图优先级按“真实编码任务是否必须”排序：
+
+1. 能创建和修改文件。
+2. 能运行测试、lint 或脚本。
+3. 能看懂失败输出并继续修复。
+4. 能留下可审计的运行记录。
+5. 能通过 demo 证明真实可用。
+
+上下文治理、结构化记忆、checkpoint/resume 和行区间编辑等能力暂缓，只有当 P1-P2 跑真实任务或录制 demo 时暴露出明确痛点，再进入 Backlog 实现。
+
+### 2.2 工具能力要受控，不要因安全焦虑取消能力
+
+`write_file` 和 `run_command` 是 P1 核心能力。安全边界通过工具治理实现：
+
+- 所有文件路径必须限制在 workspace 内。
+- 修改型或副作用型工具必须 `requires_approval=True`。
+- `approval=never` 必须阻断写文件和命令执行。
+- 命令执行固定 cwd 为 workspace root。
+- 命令执行必须有 timeout、exit code、duration 和输出截断。
+- trace/report 中记录工具调用摘要，并对敏感信息脱敏。
+
+### 2.3 真实 provider 是使用路径，fake provider 是测试工具
+
+- 有 `MICO_API_KEY` 时，CLI 应默认选择 OpenAI-compatible provider。
+- `MICO_BASE_URL` 和 `MICO_MODEL` 应有合理默认值。
+- `--provider fake` 必须保留，用于离线测试、deterministic benchmark 和 CI。
+
+### 2.4 文档和演示比复杂架构更重要
+
+P1-P2 完成后，应优先做 P6：README、demo guide、录屏和 safety model。一个能展示 mico 完成真实任务的 2 分钟录屏，比提前实现高级编辑、memory 或 checkpoint 更有价值。
+
+## 3. 核心架构
+
+### 3.1 Interface & Config
+
+职责：
+
+- 解析 one-shot prompt、workspace、provider、approval、max steps、verify command。
+- 读取 `.env` 和系统环境变量。
+- 默认 fake provider 不需要网络；真实 provider 通过 `MICO_API_KEY` 自动启用。
+
+P1 目标：
+
+- 有 API key 即可使用真实模型。
+- 缺少 base URL 时默认 `https://api.openai.com/v1`。
+- 缺少 model 时默认一个轻量可用模型，例如 `gpt-4o-mini`。
+- 显式 `--provider fake` 时强制离线 fake provider。
+
+### 3.2 Agent Runtime
+
+职责：
+
+- 组装 model client、prompt builder、tool executor、workspace、run store。
+- 执行模型请求、解析 `<tool>` / `<final>`、调用工具、记录 history。
+- 控制 step limit，避免真实模型无限循环。
+- 将模型异常、解析失败、工具失败、命令失败都归入 report。
+
+P1-P2 目标：
+
+- 支持短链路：读文件 -> 写文件 -> 运行命令 -> 读取失败 -> 再修改。
+- 工具失败必须返回清晰、可供模型重试的错误文本。
+- report 能回答：改了哪些文件、运行了哪些命令、最终验证是否通过。
+
+### 3.3 Tool System
+
+当前工具：
+
+- `list_files(path=".")`
+- `read_file(path, start=1, end=80)`
+- `search(pattern, path=".")`
+- `patch_file(path, old_text, new_text)`
+
+P1 新增工具：
+
+- `write_file(path, content)`：创建或覆盖 UTF-8 文件。
+- `run_command(argv, timeout=30)`：在 workspace root 执行命令。
+
+`run_command` 必须采用明确 argv 设计：
+
+```python
+subprocess.run(
+    argv,
+    cwd=str(workspace.root),
+    timeout=timeout,
+    capture_output=True,
+    text=True,
+    shell=False,
+)
+```
+
+约束：
+
+- `argv` 必须是非空 `list[str]`。
+- 不在 P1 支持管道、重定向、命令字符串或系统 shell。
+- `timeout` 默认 30 秒，允许范围 1 到 300 秒。
+- stdout/stderr 只返回 tail，建议每个最多 2000 chars。
+- 返回 exit code、timed_out、duration_ms、stdout_tail、stderr_tail。
+
+如未来确实需要 shell 语义，应新增单独的 `run_shell` 设计和安全说明，不把它混入 P1。
+
+### 3.4 Workspace Safety
+
+职责：
+
+- 阻止 `..`、绝对路径和 workspace 外路径。
+- 控制工具输出长度。
+- 对 trace/report 进行敏感信息脱敏。
+- 记录 changed files、files written、patches applied、commands run。
+
+写入规则：
+
+- `write_file` 可以创建父目录，但路径仍必须在 workspace 内。
+- `patch_file` 继续用于精确替换。
+- `replace_range` 进入 Backlog，不要在 P1 扩大编辑系统。
+
+### 3.5 Tool Result Format
+
+工具结果要简单、稳定、适合模型阅读。
+
+建议格式：
+
+```text
+ok=true tool=write_file path=src/foo.py bytes=123
+```
+
+```text
+ok=false tool=patch_file error_kind=ambiguous_match message="old_text appears 2 times"
+```
+
+`run_command` 返回建议：
+
+```text
+ok=false tool=run_command exit_code=1 timed_out=false duration_ms=842
+stdout_tail:
+...
+stderr_tail:
+...
+```
+
+要求：
+
+- 不返回原始 JSON 大对象给模型。
+- 错误必须有 `error_kind` 或等价短标签。
+- 命令失败不等于工具调用失败；命令 exit code 非 0 应作为模型可继续修复的信息。
+
+### 3.6 Verification Strategy
+
+`run_command` 和 `--verify-cmd` 分工明确：
+
+- `run_command` 是模型工具，用于任务过程中运行测试、读取失败输出并继续修复。
+- `--verify-cmd` 是 CLI 最终验收门，由用户显式传入，在 agent 结束后执行。
+
+因此 P1/P2 不删除 `--verify-cmd`。两者共同构成：
+
+```text
+模型自主迭代验证：run_command
+用户最终外部验收：--verify-cmd
+```
+
+### 3.7 Prompt Strategy
+
+系统提示应聚焦实际 coding agent 行为：
+
+- 先理解任务和现有文件，再修改。
+- 需要新文件时使用 `write_file`。
+- 需要验证时使用 `run_command`。
+- 不要声称测试通过，除非已经看到命令或验证结果。
+- 工具失败后根据错误信息调整策略。
+- final answer 只总结实际完成的工作和验证结果。
+
+P1 只更新静态前缀和工具说明，不做复杂 prompt 优化。
+
+### 3.8 Evaluation
+
+保留现有 benchmark，但只作为回归安全网：
+
+- fake provider 用于 deterministic tests。
+- benchmark 覆盖工具治理和基础能力。
+- live smoke 用于真实 provider 可用性。
+
+不要为了指标去设计功能。功能先服务真实使用，再用测试证明没有退化。
+
+## 4. 推荐执行顺序
+
+### P0：同步路线和协作规则
+
+目标：
+
+- 本文成为后续主路线。
+- 同步 `AGENTS.md`、`CLAUDE.md`、README 中关于工具范围和真实 provider 的描述。
 
 验收：
 
-- 新文档明确旧 framework 只作历史技术分析。
-- 新文档包含工程能力域和最终简历 bullet 的映射。
-- 后续执行顺序以本文为准。
+- 文档不再把简历或评测作为第一目标。
+- 禁止范围不再禁止 `write_file` 和命令执行。
+- 明确 `run_command` 使用 argv 和 `shell=False`。
+- `AGENTS.md` 删除或修正禁止 `write_file` / 命令执行的旧描述，并说明 Codex 必须审查 `run_command` 安全边界。
+- `CLAUDE.md` 删除或修正“严格禁止加入 write_file / shell 工具”的旧描述。
+- `README.md` 项目描述从 tiny demo/harness 改成本地 coding agent。
 
-### P1：Benchmark 指标生产线与工具治理指标化
+### P1：Minimum Working Agent Core
 
-先做这个，因为后续所有简历数字都依赖它；同时工具治理已有大量基础能力，适合在同一个 PR 中完成指标化，避免 P1 结束后 metrics 缺少治理类数据。
+目标：
 
-产物：
-
-- `benchmarks/metrics.py`。
-- benchmark JSON + Markdown summary。
-- benchmark group 概念。
-- tool governance benchmark group。
-- report 增加 `changed_files`、`patches_applied`。
-- report 或 metrics 增加 `parser_retry_count`。
-- `prompt_metadata` 明确保留 `prompt_chars`，为后续上下文治理提供 baseline。
-
-初始指标：
-
-- total / passed / failed。
-- pass rate。
-- artifact completeness。
-- failure attribution coverage。
-- tool guard pass rate。
-- parser retry count。
-
-具体子任务：
-
-- 新增 `benchmarks/metrics.py`，实现 `compute_metrics(result) -> dict`。
-- 为 benchmark 结果增加 Markdown summary 输出。
-- 给 benchmark task 增加 `group` 字段，默认兼容旧任务。
-- 支持按 group 运行任务；未指定 group 时运行全部。
-- 给现有任务补充 `harness_regression` 和 `tool_governance` 分组。
-- 补齐工具治理场景：unknown tool、repeated call。
-- 从成功的 `patch_file` 工具调用中提取 `changed_files` 和 `patches_applied`。
-- 明确 `failure_attribution_coverage` 定义为 `failure_category != "unknown"` 的任务比例。
-- 保持现有 `python -m benchmarks` 行为兼容。
-
-验收：
-
-- `python -m benchmarks` 仍能运行。
-- 生成 `benchmarks/results/latest.json` 和 Markdown summary。
-- summary 中的指标来自实际 benchmark 结果。
-- 工具治理任务可单独运行。
-- failure attribution coverage 有明确统计口径。
-- report 与 trace 能支撑复盘。
-
-### P2：Verified Coding Agent Demo
-
-把项目变成能演示的 coding agent。
+- 让 mico 具备真实 coding agent 最小能力。
 
 产物：
 
-- `mico/verification.py`。
-- CLI `--verify-cmd` 和 `--verify-timeout`。
-- `.mico/runs/<run_id>/verification.json`。
-- `examples/tiny-python-bug/`。
-- verification benchmark group 和 verifier pass rate 指标。
+- `write_file(path, content)`。
+- `run_command(argv, timeout=30)`。
+- provider 自动选择优化。
+- prompt 前缀更新为 local coding agent。
+- 工具单元测试。
+- benchmark case：write success/denied、command success/denied。
+- live smoke 覆盖 write 和 command。
+
+实施顺序：
+
+1. 先实现 `write_file`，补齐 path、parent directory、overwrite、approval、path escape 测试。
+2. 再实现 `run_command(argv, timeout=30)`，补齐 success、stderr、non-zero exit、timeout、invalid argv、approval 测试。
+3. 最后优化 provider 自动选择和 prompt 前缀，避免工具能力和 provider 行为混在同一批未验证改动里。
 
 验收：
 
-- 一条命令能完成：读代码 -> 修改 bug -> 执行验证 -> 生成报告。
-- 验证命令不作为模型工具开放。
-- verifier pass rate 可被 benchmark 统计。
-- fake benchmark 验证 harness 行为。
-- P2 不要求交互式多轮任务，也不要求完成真实模型质量评测；真实模型表现放入 P2.5。
+- `python -m pytest --basetemp .tmp/pytest-basetemp-p1`
+- `python -m benchmarks`
+- `python -m mico "列出当前目录"`
+- `approval=never` 阻断 `write_file` 和 `run_command`。
+- `run_command` 使用 `shell=False` 和 argv。
+- report 记录 files written、commands run、exit code。
 
-### P2.5：真实模型评测与多轮任务基线
+### P2：真实任务闭环
 
-这是 P3/P4 的前置里程碑。没有真实 provider 和 follow-up scenario，上下文治理与结构化记忆缺少可说服的收益基线。
+目标：
+
+- mico 能在真实模型下完成一个小型创建/修改/测试任务。
 
 产物：
 
-- 固定 quality task 集合，例如 `benchmarks/quality_tasks.json` 或 `benchmarks/live.py` 中的固定 task 定义。
-- real-provider summary，记录 provider、model、base URL 摘要、任务数、pass rate、verifier pass rate、model error rate、平均耗时。
-- scripted multi-turn / follow-up scenario，例如 `examples/multi-turn-follow-up/`。
-- 对 fake regression 和 real provider experiment 的 README 或 docs 说明，明确两者口径不同。
-
-边界：
-
-- 使用现有 OpenAI-compatible provider，不做多 provider 完整适配。
-- 使用 `.env` 或环境变量读取 `MICO_API_KEY`、`MICO_BASE_URL`、`MICO_MODEL`，不把 key 写入仓库。
-- “多轮任务”先做脚本化 scenario，不做交互式 REPL，不默认长期复用 `Mico.history`。
-- 不把验证命令或 shell 暴露给模型。
+- `examples/practical-python-task/`。
+- 一个 copyable demo command。
+- 一个真实 provider smoke task。
+- report 增加 command summary 和 verification summary。
 
 验收：
 
-- 能用真实 provider 跑固定任务集并输出 summary。
-- summary 中所有数字来自运行结果，不手写。
-- 至少包含一个 follow-up scenario，为 P3 的 prompt 压缩和 P4 的 repeated file reads 建立 baseline。
-- 真实模型失败时能区分 model error、verification failed、tool governance blocked 等归因。
+- mico 能创建源码和测试文件。
+- mico 能运行测试命令。
+- 测试失败时，模型能读取失败输出并再次修改。
+- 最终 run artifact 可复盘。
 
-### P3：上下文治理
+### P6：文档、演示和项目展示
 
-在 prompt 已结构化且 P2.5 已建立多轮/真实模型基线之后做预算控制。
+P1-P2 后优先做 P6，而不是继续做复杂编辑、上下文或恢复系统。
 
 产物：
 
-- prompt budget config。
-- context benchmark group。
-- prompt compression metrics。
-- prompt section hash、cacheable prefix chars。
-- provider cached token usage 可选采集；只有 provider 返回该字段时才写入真实 cache 指标。
+- README：安装、配置、真实使用示例。
+- docs/demo-guide.md：3 个可复制场景。
+- docs/safety-model.md：工具权限、workspace 沙箱、命令执行边界。
+- docs/resume.md：从真实能力自然提炼简历描述。
+- 2 分钟录屏或 recorded session：
+  - 场景 1：`python -m mico "在当前目录创建 fibonacci 函数和 pytest 测试，运行 pytest 直到通过"`。
+  - 场景 2：`python -m mico "修复 examples/buggy-math/add.py 中的加法错误，运行 python verify.py"`。
+  - 场景 3：`python -m mico "给 src/utils.py 添加 reverse_string 函数，创建测试，运行 pytest"`。
+  - 每个场景展示 `.mico/runs/<run_id>/report.json` 中的 changed files、files written、commands run、exit code 和 verification status。
 
 验收：
 
-- current request 不被裁剪。
-- 裁剪顺序明确，优先裁 history，再裁 memory，再裁 workspace summary。
-- prompt compression ratio 来自 benchmark。
-- prompt cache-aware 结构稳定：固定 prefix 不随单次任务内容轻易变化。
-- 不把本地估算的 cacheable prefix chars 冒充 provider 实际 cache hit。
-- 裁剪后任务仍能完成。
+- 新用户按 README 可以跑 fake demo。
+- 有 API key 时可以跑真实 coding demo。
+- demo 能证明 mico 创建、修改、运行测试和修复失败。
 
-### P4：结构化记忆系统
+## 5. Backlog：只有真实痛点出现后再做
 
-放在上下文治理之后，因为 memory 最终要进入 prompt，并接受预算控制；同时依赖 P2.5 的 follow-up baseline 来证明减少重复读文件的收益。
+以下能力不是当前主线：
 
-产物：
+- 编辑能力增强：`replace_range(path, start, end, content)` 或等价行区间替换工具。
+- context budget。
+- 文件摘要。
+- 任务内 structured memory。
+- checkpoint/resume。
+- workspace fingerprint。
+- drift detection。
 
-- `mico/memory.py`。
-- memory benchmark group。
-- `examples/follow-up-memory/`。
+启动条件：
 
-前置决策：
+- P1-P2 已能完成小型真实任务，且 P6 demo 录制已暴露出明确问题。
+- 真实 demo 中频繁遇到 `patch_file` 精确匹配失败，并且 `write_file` 小文件整体重写不适合解决。
+- 真实使用中反复遇到 prompt 过长、重复读文件或长任务中断问题。
+- 能用一个具体 demo 证明这些能力确实解决问题。
 
-- follow-up benchmark 不复用原始 `Mico.history` 作为记忆来源。
-- 结构化记忆通过显式 `memory` 对象或工件在 run 之间传递。
-- 若后续要复用同一个 `Mico` 实例做多轮 `ask()`，必须先处理 history 串台问题。
+每次启动前先问：
 
-验收：
+```text
+pico 是否需要这个能力？如果不需要，mico 当前为什么需要？
+```
 
-- 记录 task summary、recent files、file summaries、episodic notes。
-- follow-up benchmark 能统计 repeated file reads。
-- 结构化记忆减少重复读文件的收益可量化。
+## 6. 下一步
 
-### P5：Checkpoint / Resume
+当前应先完成：
 
-放在 memory 后面，因为 resume 需要恢复的不只是历史，还包括 memory、changed files 和 workspace fingerprint。
+```text
+P0：同步路线和协作规则
+```
 
-产物：
+随后进入：
 
-- `mico/checkpoint.py`。
-- CLI `--resume`。
-- resume benchmark group。
+```text
+P1：Minimum Working Agent Core
+```
 
-验收：
+P1 是项目能否真正可用的分水岭。没有 `write_file`，mico 无法创建代码或测试；没有 `run_command(argv)`，mico 无法验证真实项目。
 
-- 支持从 run id 恢复。
-- 能识别 workspace drift。
-- 生成 resume success rate 和 workspace drift detection rate。
+## 7. Claude Code 协作要求
 
-### P6：简历与面试材料收口
-
-产物：
-
-- `docs/resume.md`。
-- `docs/demo-guide.md`。
-- `docs/model-eval.md`。
-- README 改成项目展示入口。
-
-验收：
-
-- 所有数字来自 benchmark summary。
-- deterministic regression 数字和 real provider quality experiment 数字分开展示。
-- 简历描述能对应到代码模块、运行工件和实验结果。
-- demo guide 能让面试官或用户复现关键能力。
-
-## 7. 禁止范围
-
-近期不做：
-
-- shell tool。
-- `write_file` 工具。
-- 多 agent。
-- Web UI / TUI。
-- 长期知识库。
-- 自动 git commit。
-- 复杂权限 UI。
-- 多 provider 完整适配。
-- 后台任务或任务队列。
-
-说明：这里禁止的是多 provider 完整适配和复杂兼容层；P2.5 允许继续使用现有 OpenAI-compatible provider 做真实模型质量实验。
-
-## 8. 后续执行方式
-
-- Claude Code 负责实现初稿、补测试、根据失败修复和整理说明。
-- Codex 负责任务边界、架构审查、测试验收和最终接受。
-- 每一阶段执行前，Claude Code 应先阅读 `AGENTS.md`、`CLAUDE.md` 和本文。
-- 如使用 Superpowers 插件，应限于计划、自检、执行拆分和代码审查，不把 Superpowers 作为 `mico` 运行依赖。
-- 每阶段提交后更新本文状态或新增对应总结文档，记录实测指标。
-
-## 9. 当前下一步
-
-当前执行位置：
-
-- P1 已建立 benchmark 指标生产线和工具治理指标。
-- P2 已建立验证闭环、verification group、`verification.json` 和 tiny bug demo。
-- P2 改动提交后，下一步进入 P2.5：真实模型评测与多轮任务基线。
-
-下一步选择 P2.5 的原因：
-
-- P3 上下文治理需要真实 prompt 长度、多轮 follow-up 和 provider 行为作为 baseline。
-- P4 结构化记忆需要 follow-up scenario 才能证明 repeated file reads 的减少。
-- 简历需要把 deterministic regression baseline 和 real provider quality experiment 分开展示。
-- 先补真实模型实验框架，可以尽快形成类似 pico 的“模型后端效果评估”讲点。
+- Claude Code 可负责 P1 实现初稿、测试和文档同步。
+- Codex 必须审查 `run_command` 的安全边界。
+- 如果 Claude Code 实现或建议 `shell=True`，应退回修改为 argv + `shell=False`，除非用户单独批准设计 `run_shell`。
+- 如果 Claude Code 调用失败、超时或无产出，按 `AGENTS.md` 询问用户下一步，不直接接手大改。
