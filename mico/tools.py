@@ -1,6 +1,8 @@
+import json
 import shutil
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -20,6 +22,20 @@ TOOL_SPECS = {
     "patch_file": ToolSpec(
         "Exact text replacement in a file.",
         '{"path": "str", "old_text": "str", "new_text": "str"}',
+        requires_approval=True,
+        read_only=False,
+        concurrency_safe=False,
+    ),
+    "write_file": ToolSpec(
+        "Write UTF-8 content to a file, creating parent dirs if needed.",
+        '{"path": "str", "content": "str"}',
+        requires_approval=True,
+        read_only=False,
+        concurrency_safe=False,
+    ),
+    "run_command": ToolSpec(
+        "Run a command as argv list with timeout.",
+        '{"argv": "list[str]", "timeout": "int=30"}',
         requires_approval=True,
         read_only=False,
         concurrency_safe=False,
@@ -86,6 +102,43 @@ def validate_tool(workspace, name, args):
         if "new_text" not in args:
             raise ValueError("new_text field is required")
         return
+    if name == "write_file":
+        if "path" not in args:
+            raise ValueError("path field is required")
+        if "content" not in args:
+            raise ValueError("content field is required")
+        path = workspace.path(args["path"])
+        if path.is_dir():
+            raise ValueError("path is a directory, not a file")
+        parts = Path(args["path"]).parts
+        if any(part in workspace.ignored_names for part in parts):
+            raise ValueError("path targets an ignored directory")
+        return
+    if name == "run_command":
+        argv = args.get("argv")
+        if not isinstance(argv, list):
+            raise ValueError("argv must be a list")
+        if len(argv) == 0:
+            raise ValueError("argv must be non-empty")
+        for i, elem in enumerate(argv):
+            if not isinstance(elem, str):
+                raise ValueError(f"argv[{i}] must be a string, got {type(elem).__name__}")
+        _SHELL_INTERPRETERS = {
+            "cmd", "cmd.exe", "powershell", "powershell.exe",
+            "pwsh", "pwsh.exe", "bash", "bash.exe", "sh", "sh.exe",
+        }
+        prog = Path(argv[0]).name.lower()
+        if prog in _SHELL_INTERPRETERS:
+            raise ValueError(f"shell interpreter not allowed: {argv[0]}")
+        raw_timeout = args.get("timeout", 30)
+        if isinstance(raw_timeout, bool) or not isinstance(raw_timeout, int):
+            raise ValueError(f"timeout must be an integer, got {type(raw_timeout).__name__}")
+        timeout = raw_timeout
+        if timeout < 1:
+            raise ValueError("timeout must be a positive integer")
+        if timeout > 120:
+            raise ValueError("timeout must be at most 120 seconds")
+        return
 
 
 def execute_validated_tool(workspace, name, args):
@@ -97,6 +150,10 @@ def execute_validated_tool(workspace, name, args):
         return _search(workspace, args)
     if name == "patch_file":
         return _patch_file(workspace, args)
+    if name == "write_file":
+        return _write_file(workspace, args)
+    if name == "run_command":
+        return _run_command(workspace, args)
     raise ValueError(f"unknown tool: {name}")
 
 
@@ -170,3 +227,55 @@ def _patch_file(workspace, args):
     updated = content.replace(old_text, new_text, 1)
     path.write_text(updated, encoding="utf-8")
     return f"patched {workspace.relative(path)}"
+
+
+def _write_file(workspace, args):
+    path = workspace.path(args["path"])
+    content = str(args["content"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    byte_count = len(content.encode("utf-8"))
+    return f"written {workspace.relative(path)} bytes={byte_count}"
+
+
+_MAX_STDOUT = 1000
+_MAX_STDERR = 1000
+
+
+def _run_command(workspace, args):
+    argv = list(args["argv"])
+    timeout = int(args.get("timeout", 30))
+    try:
+        result = subprocess.run(
+            argv,
+            cwd=str(workspace.root),
+            timeout=timeout,
+            capture_output=True,
+            text=True,
+            shell=False,
+        )
+        stdout = result.stdout[-_MAX_STDOUT:] if len(result.stdout) > _MAX_STDOUT else result.stdout
+        stderr = result.stderr[-_MAX_STDERR:] if len(result.stderr) > _MAX_STDERR else result.stderr
+        if result.returncode == 0:
+            metadata = {"ok": True, "error_kind": "ok", "exit_code": 0, "timed_out": False}
+            return json.dumps({
+                "__tool_metadata__": metadata,
+                "stdout": stdout,
+                "stderr": stderr,
+            })
+        metadata = {"ok": False, "error_kind": "command_failed", "exit_code": result.returncode, "timed_out": False}
+        return json.dumps({
+            "__tool_metadata__": metadata,
+            "stdout": stdout,
+            "stderr": stderr,
+        })
+    except subprocess.TimeoutExpired:
+        metadata = {"ok": False, "error_kind": "command_timed_out", "exit_code": None, "timed_out": True}
+        return json.dumps({
+            "__tool_metadata__": metadata,
+        })
+    except (FileNotFoundError, OSError) as exc:
+        metadata = {"ok": False, "error_kind": "command_error", "exit_code": None, "timed_out": False, "error": str(exc)}
+        return json.dumps({
+            "__tool_metadata__": metadata,
+        })

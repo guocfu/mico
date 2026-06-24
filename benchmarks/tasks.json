@@ -219,6 +219,98 @@
     }
   },
   {
+    "name": "write_file_success",
+    "group": "harness_regression",
+    "description": "write_file creates a new file",
+    "fake_outputs": [
+      "<tool>{\"name\":\"write_file\",\"args\":{\"path\":\"out.txt\",\"content\":\"hello world\"}}</tool>",
+      "<final>written</final>"
+    ],
+    "workspace_setup": [],
+    "assertions": {
+      "stop_reason": "final",
+      "failure_category": "success",
+      "tools_used": ["write_file"],
+      "tool_call_summary": {"ok": 1},
+      "file_contents": {"out.txt": "hello world"},
+      "raw_model_outputs_absent_from_report": true
+    }
+  },
+  {
+    "name": "write_file_denied",
+    "group": "tool_governance",
+    "description": "write_file rejected under approval=never",
+    "approval_policy": "never",
+    "fake_outputs": [
+      "<tool>{\"name\":\"write_file\",\"args\":{\"path\":\"out.txt\",\"content\":\"hello\"}}</tool>",
+      "<final>could not write</final>"
+    ],
+    "workspace_setup": [],
+    "assertions": {
+      "stop_reason": "final",
+      "failure_category": "success",
+      "tools_used": ["write_file"],
+      "tool_call_summary": {"approval_denied": 1},
+      "history_contains": ["approval=never"],
+      "raw_model_outputs_absent_from_report": true
+    }
+  },
+  {
+    "name": "run_command_success",
+    "group": "harness_regression",
+    "description": "run_command executes successfully",
+    "fake_outputs": [
+      "<tool>{\"name\":\"run_command\",\"args\":{\"argv\":[\"python\",\"-c\",\"print(42)\"]}}</tool>",
+      "<final>ran</final>"
+    ],
+    "workspace_setup": [],
+    "assertions": {
+      "stop_reason": "final",
+      "failure_category": "success",
+      "tools_used": ["run_command"],
+      "tool_call_summary": {"ok": 1},
+      "history_contains": ["42"],
+      "raw_model_outputs_absent_from_report": true
+    }
+  },
+  {
+    "name": "run_command_denied",
+    "group": "tool_governance",
+    "description": "run_command rejected under approval=never",
+    "approval_policy": "never",
+    "fake_outputs": [
+      "<tool>{\"name\":\"run_command\",\"args\":{\"argv\":[\"python\",\"-c\",\"print(1)\"]}}</tool>",
+      "<final>could not run</final>"
+    ],
+    "workspace_setup": [],
+    "assertions": {
+      "stop_reason": "final",
+      "failure_category": "success",
+      "tools_used": ["run_command"],
+      "tool_call_summary": {"approval_denied": 1},
+      "history_contains": ["approval=never"],
+      "raw_model_outputs_absent_from_report": true
+    }
+  },
+  {
+    "name": "run_command_failure_output",
+    "group": "harness_regression",
+    "description": "run_command with nonzero exit captures output",
+    "fake_outputs": [
+      "<tool>{\"name\":\"run_command\",\"args\":{\"argv\":[\"python\",\"-c\",\"import sys; sys.stderr.write('oops\\n'); sys.exit(1)\"]}}</tool>",
+      "<final>failed</final>"
+    ],
+    "workspace_setup": [],
+    "assertions": {
+      "stop_reason": "final",
+      "failure_category": "success",
+      "tools_used": ["run_command"],
+      "tool_call_summary": {"command_failed": 1},
+      "history_contains": ["command_failed", "oops"],
+      "raw_model_outputs_absent_from_report": true
+    }
+  },
+  {
     "name": "verify_fail_after_bad_patch",
     "group": "verification",
     "description": "agent patches incorrectly and verification fails",

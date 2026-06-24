@@ -885,7 +885,7 @@ def test_report_preserves_existing_fields_with_prompt_metadata(tmp_path):
     assert report["failure_category"] == "success"
     assert "prompt_metadata" in report
     assert report["prompt_metadata"]["approval_policy"] == "never"
-    assert report["prompt_metadata"]["restricted_tool_count"] == 1
+    assert report["prompt_metadata"]["restricted_tool_count"] == 3
 
 
 def test_model_parsed_trace_has_error_kind_on_retry(tmp_path):
@@ -998,6 +998,228 @@ def test_parser_error_kind_resets_between_asks(tmp_path):
     success_report = next(report for report in reports if report["task_state"]["stop_reason"] == "final")
     assert retry_report["parser_error_kind"] == "unknown_block"
     assert "parser_error_kind" not in success_report
+
+
+def test_agent_loop_executes_write_file(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"write_file","args":{"path":"out.txt","content":"hello mico"}}</tool>',
+            "<final>written</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    answer = agent.ask("create file")
+
+    assert answer == "written"
+    assert (tmp_path / "out.txt").read_text(encoding="utf-8") == "hello mico"
+    assert agent.history[1]["role"] == "tool"
+    assert agent.history[1]["name"] == "write_file"
+    assert agent.history[1]["metadata"]["ok"] is True
+
+
+def test_agent_loop_executes_run_command(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"run_command","args":{"argv":["python","-c","print(42)"]}}</tool>',
+            "<final>ran</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    answer = agent.ask("run python")
+
+    assert answer == "ran"
+    assert agent.history[1]["role"] == "tool"
+    assert agent.history[1]["name"] == "run_command"
+    assert agent.history[1]["metadata"]["ok"] is True
+    assert "42" in agent.history[1]["content"]
+
+
+def test_agent_loop_run_command_failure_records_exit_code(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"run_command","args":{"argv":["python","-c","import sys; sys.exit(2)"]}}</tool>',
+            "<final>failed</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    answer = agent.ask("run failing cmd")
+
+    assert answer == "failed"
+    assert agent.history[1]["metadata"]["ok"] is False
+    assert agent.history[1]["metadata"]["error_kind"] == "command_failed"
+    assert agent.history[1]["metadata"]["exit_code"] == 2
+    assert agent.history[1]["metadata"]["timed_out"] is False
+
+
+def test_agent_loop_write_file_rejected_by_approval_never(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"write_file","args":{"path":"out.txt","content":"hello"}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+        approval_policy="never",
+    )
+
+    answer = agent.ask("create file")
+
+    assert answer == "done"
+    assert "not allowed" in agent.history[1]["content"]
+    assert agent.history[1]["metadata"]["error_kind"] == "approval_denied"
+    assert agent.history[1]["metadata"]["blocked_by_approval"] is True
+    assert not (tmp_path / "out.txt").exists()
+
+
+def test_agent_loop_run_command_rejected_by_approval_never(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"run_command","args":{"argv":["python","-c","print(1)"]}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+        approval_policy="never",
+    )
+
+    answer = agent.ask("run cmd")
+
+    assert answer == "done"
+    assert "not allowed" in agent.history[1]["content"]
+    assert agent.history[1]["metadata"]["error_kind"] == "approval_denied"
+    assert agent.history[1]["metadata"]["blocked_by_approval"] is True
+
+
+def test_report_includes_write_file_in_changed_files(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"write_file","args":{"path":"new.txt","content":"data"}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    agent.ask("create file")
+
+    run_dirs = list((tmp_path / ".mico" / "runs").iterdir())
+    report = json.loads((run_dirs[0] / "report.json").read_text(encoding="utf-8"))
+    assert "new.txt" in report["changed_files"]
+
+
+def test_report_tool_call_summary_counts_write_file_ok(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"write_file","args":{"path":"out.txt","content":"x"}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    agent.ask("write")
+
+    run_dirs = list((tmp_path / ".mico" / "runs").iterdir())
+    report = json.loads((run_dirs[0] / "report.json").read_text(encoding="utf-8"))
+    assert report["tool_call_summary"]["ok"] == 1
+
+
+def test_report_tool_call_summary_counts_run_command_ok(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"run_command","args":{"argv":["python","-c","print(1)"]}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    agent.ask("run")
+
+    run_dirs = list((tmp_path / ".mico" / "runs").iterdir())
+    report = json.loads((run_dirs[0] / "report.json").read_text(encoding="utf-8"))
+    assert report["tool_call_summary"]["ok"] == 1
+
+
+def test_report_tool_call_summary_counts_approval_denied_for_both_tools(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"write_file","args":{"path":"out.txt","content":"x"}}</tool>',
+            '<tool>{"name":"run_command","args":{"argv":["python","-c","print(1)"]}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+        approval_policy="never",
+    )
+
+    agent.ask("write and run")
+
+    run_dirs = list((tmp_path / ".mico" / "runs").iterdir())
+    report = json.loads((run_dirs[0] / "report.json").read_text(encoding="utf-8"))
+    assert report["tool_call_summary"]["approval_denied"] == 2
+
+
+def test_prompt_includes_write_file_and_run_command(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient(),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    prompt = agent.build_prompt("do something")
+
+    assert "write_file" in prompt
+    assert "run_command" in prompt
+
+
+def test_report_available_tools_includes_new_tools(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient(["<final>ok</final>"]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    agent.ask("hello")
+
+    run_dirs = list((tmp_path / ".mico" / "runs").iterdir())
+    report = json.loads((run_dirs[0] / "report.json").read_text(encoding="utf-8"))
+    assert "write_file" in report["available_tools"]
+    assert "run_command" in report["available_tools"]
+
+
+def test_report_restricted_tools_includes_new_tools_under_approval_never(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient(["<final>ok</final>"]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+        approval_policy="never",
+    )
+
+    agent.ask("hello")
+
+    run_dirs = list((tmp_path / ".mico" / "runs").iterdir())
+    report = json.loads((run_dirs[0] / "report.json").read_text(encoding="utf-8"))
+    assert "write_file" in report["restricted_tools"]
+    assert "run_command" in report["restricted_tools"]
 
 
 def test_report_does_not_contain_raw_model_output(tmp_path):

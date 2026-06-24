@@ -10,6 +10,23 @@ class ToolResult:
     metadata: dict = field(default_factory=dict)
 
 
+def _extract_tool_metadata(content):
+    """If content is a JSON string containing __tool_metadata__, extract and return it."""
+    if not isinstance(content, str):
+        return None
+    try:
+        parsed = json.loads(content)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(parsed, dict) or "__tool_metadata__" not in parsed:
+        return None
+    meta = dict(parsed["__tool_metadata__"])
+    # Build a clean content string without __tool_metadata__
+    clean = {k: v for k, v in parsed.items() if k != "__tool_metadata__"}
+    meta["__content__"] = json.dumps(clean, ensure_ascii=False)
+    return meta
+
+
 class ToolExecutor:
     def __init__(self, workspace, approval_policy="auto"):
         self.workspace = workspace
@@ -91,6 +108,12 @@ class ToolExecutor:
                 metadata={**metadata, "ok": False, "error_kind": "validation_error"},
             )
         self._last_tool_signature = signature
+        extracted_metadata = _extract_tool_metadata(content)
+        if extracted_metadata is not None:
+            return ToolResult(
+                content=extracted_metadata.pop("__content__", content),
+                metadata={**metadata, **extracted_metadata},
+            )
         return ToolResult(
             content=content,
             metadata={**metadata, "ok": True, "error_kind": "ok"},

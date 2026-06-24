@@ -16,7 +16,7 @@ from benchmarks.metrics import compute_metrics, markdown_summary
 def test_load_tasks_returns_all_cases():
     tasks = load_tasks()
 
-    assert len(tasks) == 12
+    assert len(tasks) == 17
     names = [t["name"] for t in tasks]
     assert "list_files_success" in names
     assert "read_file_success" in names
@@ -30,17 +30,22 @@ def test_load_tasks_returns_all_cases():
     assert "repeated_call_rejected" in names
     assert "patch_and_verify_success" in names
     assert "verify_fail_after_bad_patch" in names
+    assert "write_file_success" in names
+    assert "write_file_denied" in names
+    assert "run_command_success" in names
+    assert "run_command_denied" in names
+    assert "run_command_failure_output" in names
     assert all("group" in t for t in tasks)
 
 
 def test_run_benchmark_all_cases_pass():
     result = run_benchmark()
 
-    assert result.total == 12
+    assert result.total == 17
     assert result.failed == 0, (
         f"Failed cases: {[c.name for c in result.cases if c.status != 'PASS']}"
     )
-    assert result.passed == 12
+    assert result.passed == 17
 
 
 def test_result_json_has_correct_structure():
@@ -52,7 +57,7 @@ def test_result_json_has_correct_structure():
     assert "failed" in data
     assert "metrics" in data
     assert "cases" in data
-    assert len(data["cases"]) == 12
+    assert len(data["cases"]) == 17
 
     for case in data["cases"]:
         assert "name" in case
@@ -100,7 +105,7 @@ def test_tool_governance_group_cases_pass():
     tasks = [task for task in load_tasks() if task["group"] == "tool_governance"]
     result = run_benchmark(tasks)
 
-    assert result.total == 4
+    assert result.total == 6
     assert result.failed == 0
     assert all(case.group == "tool_governance" for case in result.cases)
 
@@ -136,14 +141,14 @@ def test_compute_metrics_from_benchmark_result():
     result = run_benchmark()
     metrics = compute_metrics(result)
 
-    assert metrics["total"] == 12
-    assert metrics["passed"] == 12
+    assert metrics["total"] == 17
+    assert metrics["passed"] == 17
     assert metrics["failed"] == 0
     assert metrics["pass_rate"] == 1.0
     assert metrics["artifact_completeness_rate"] == 1.0
     assert metrics["failure_attribution_coverage"] == 1.0
     assert metrics["tool_guard_pass_rate"] == 1.0
-    assert metrics["tool_governance_total"] == 4
+    assert metrics["tool_governance_total"] == 6
     assert metrics["parser_retry_count_total"] == 1
     assert metrics["verifier_pass_rate"] == 0.5
     assert metrics["verification_total"] == 2
@@ -248,7 +253,7 @@ def test_write_results_creates_metrics_json(tmp_path):
 
     assert output.exists()
     data = json.loads(output.read_text(encoding="utf-8"))
-    assert data["total"] == 12
+    assert data["total"] == 17
     assert data["failed"] == 0
     assert data["metrics"]["pass_rate"] == 1.0
     text = json.dumps(data)

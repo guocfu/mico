@@ -42,7 +42,7 @@ class PromptBuilder:
 
     @staticmethod
     def _static_prefix():
-        return "You are mico, a tiny local coding agent."
+        return "You are mico, a local coding agent that can read, write, and run code in a sandboxed workspace."
 
     @staticmethod
     def _response_contract():

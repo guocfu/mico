@@ -81,6 +81,11 @@ class Mico:
                 if path and path not in changed_file_set:
                     changed_file_set.add(path)
                     changed_files.append(path)
+            if item.get("name") == "write_file" and item.get("metadata", {}).get("ok") is True:
+                path = item.get("args", {}).get("path")
+                if path and path not in changed_file_set:
+                    changed_file_set.add(path)
+                    changed_files.append(path)
         available_tools = [item["name"] for item in self.tool_executor.tool_catalog() if item["allowed"]]
         report = {
             "artifacts_version": "1",
