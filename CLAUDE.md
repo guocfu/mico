@@ -89,7 +89,8 @@ subprocess.run(
   - 如何验证；
   - 哪些点需要 Codex 复核。
 - 如需建议 git commit 信息，使用中文说明并保留 Conventional Commits 类型前缀，例如 `refactor: 收敛工具执行边界`。
-- 可以使用 Superpowers 插件辅助复杂任务分解、自检和代码审查，但不要把它当作 `mico` 运行依赖，也不要因此扩大任务范围。
+- 根据任务复杂度和 Codex 指令，可以使用 Superpowers 插件辅助任务分解、自检、执行计划和代码审查。
+- 使用 Superpowers 时必须保持任务边界不变；不要把它当作 `mico` 运行依赖，也不要因此扩大实现范围、引入新产品能力或绕过 Codex 的架构审查。
 
 ## 验收命令
 
