@@ -11,7 +11,7 @@ from .workspace import Workspace
 
 
 def build_arg_parser():
-    parser = argparse.ArgumentParser(description="A tiny local coding agent demo.")
+    parser = argparse.ArgumentParser(description="mico - a local coding agent that creates, modifies, runs and verifies code.")
     parser.add_argument("prompt", nargs="*", help="One-shot prompt.")
     parser.add_argument("--cwd", default=".", help="Workspace directory.")
     parser.add_argument("--max-steps", type=int, default=4, help="Maximum model/tool iterations.")
@@ -116,12 +116,33 @@ def build_agent(args):
     )
 
 
+def run_repl(agent):
+    print("mico interactive mode (Ctrl+C or Ctrl+D to exit)")
+    try:
+        while True:
+            try:
+                user_input = input("mico> ").strip()
+            except EOFError:
+                print("\nBye.")
+                return 0
+            if not user_input:
+                continue
+            final_answer = agent.ask(user_input)
+            print(final_answer)
+    except KeyboardInterrupt:
+        print("\nBye.")
+        return 0
+
+
 def main(argv=None):
     load_dotenv(Path.cwd())
     args = build_arg_parser().parse_args(argv)
     prompt = " ".join(args.prompt).strip()
     if not prompt:
-        raise SystemExit("mico requires a one-shot prompt for v0")
+        if args.verify_cmd:
+            raise SystemExit("--verify-cmd is only supported in one-shot mode")
+        agent = build_agent(args)
+        return run_repl(agent)
     agent = build_agent(args)
     final_answer = agent.ask(prompt)
     print(final_answer)

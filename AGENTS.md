@@ -41,10 +41,12 @@ Codex 在接受 P1 实现前必须审查以下内容：
 ## 仍然禁止
 
 - 不做自动 git commit。
-- 不做交互式 REPL、Web UI、后台任务或任务队列。
+- 允许最小 CLI REPL（轻量命令行入口，用于接收用户任务并启动 agent loop）；不做 Web UI、后台任务或任务队列。
 - 不做多 agent 系统。
 - 不做复杂权限 UI。
 - 不做 checkpoint / memory / context governance，除非后续真实任务暴露明确痛点。
+
+说明：最小 CLI REPL 是轻量入口，不等于复杂会话系统、slash command、补全、TUI 或多会话恢复。
 
 ## 参考项目使用
 

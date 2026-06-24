@@ -71,7 +71,7 @@ subprocess.run(
 ## 仍然禁止
 
 - 不做自动 git commit。
-- 不做交互式 REPL。
+- 允许最小 CLI REPL（轻量命令行入口，用于接收用户任务并启动 agent loop）；不做复杂会话系统、slash command、补全、TUI 或多会话恢复。
 - 不做多 agent。
 - 不做复杂权限 UI。
 - 后台任务、任务队列或 Web UI。
