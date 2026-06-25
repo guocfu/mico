@@ -71,7 +71,7 @@ def test_prompt_contains_sections():
     assert "Recent history:" in text
 
 
-def test_prompt_contract_warns_not_to_repeat_successful_tool_call():
+def test_prompt_contract_warns_to_finish_after_successful_edit():
     builder = PromptBuilder()
     bundle = builder.build(
         tool_catalog=_sample_catalog(),
@@ -81,7 +81,8 @@ def test_prompt_contract_warns_not_to_repeat_successful_tool_call():
         history=[],
     )
 
-    assert "Do not repeat the same tool call with the same arguments if it did not help." in bundle.text
+    assert "After creating or editing a file, do not repeat or refine the same operation." in bundle.text
+    assert "When the requested change is complete, respond with <final> immediately." in bundle.text
 
 
 def test_prompt_empty_history_shows_empty():
@@ -242,11 +243,12 @@ def test_prompt_warns_not_to_repeat_successful_write_tools():
         ],
     )
 
-    assert "After creating or editing a file, state what you did in one sentence." in bundle.text
-    assert "Do not restate the contents or walk through changes." in bundle.text
+    assert "After creating or editing a file, do not repeat or refine the same operation." in bundle.text
+    assert "Do not read or list files solely to inspect your own edit." in bundle.text
+    assert "When the requested change is complete, respond with <final> immediately." in bundle.text
 
 
-def test_prompt_chose_different_tool_or_final():
+def test_prompt_uses_completion_behavior_not_same_arguments_rule():
     builder = PromptBuilder()
     bundle = builder.build(
         tool_catalog=_sample_catalog(),
@@ -255,7 +257,8 @@ def test_prompt_chose_different_tool_or_final():
         user_message="fix code",
         history=[],
     )
-    assert "Choose a different tool or return a final answer." in bundle.text
+    assert "After creating or editing a file, do not repeat or refine the same operation." in bundle.text
+    assert "Do not repeat the same tool call with the same arguments" not in bundle.text
 
 
 def test_prompt_does_not_contain_old_long_reminders():

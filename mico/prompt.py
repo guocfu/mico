@@ -66,8 +66,9 @@ class PromptBuilder:
             '<tool>{"name":"tool_name","args":{}}</tool>\n'
             "<final>answer</final>\n"
             "No text outside the XML block. Do not explain or narrate between tool calls.\n"
-            "Do not repeat the same tool call with the same arguments if it did not help. "
-            "Choose a different tool or return a final answer."
+            "After creating or editing a file, do not repeat or refine the same operation. "
+            "Do not read or list files solely to inspect your own edit. "
+            "When the requested change is complete, respond with <final> immediately."
         )
 
     @staticmethod

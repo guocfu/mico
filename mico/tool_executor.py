@@ -33,9 +33,11 @@ class ToolExecutor:
         self.approval_policy = approval_policy
         self.approval_callback = approval_callback
         self._last_tool_signature = None
+        self._patched_old_texts = {}
 
     def reset_run_state(self):
         self._last_tool_signature = None
+        self._patched_old_texts.clear()
 
     def tool_catalog(self):
         from .tools import build_tool_catalog
@@ -95,6 +97,17 @@ class ToolExecutor:
                 metadata={**metadata, "ok": False, "repeated_call": True, "error_kind": "repeated_call"},
             )
 
+        patch_old_text_key = None
+        if name == "patch_file":
+            path = self.workspace.relative(self.workspace.path(args["path"]))
+            patch_old_text_key = (path, args["old_text"])
+            previous_new_text = self._patched_old_texts.get(patch_old_text_key)
+            if previous_new_text is not None and previous_new_text != args["new_text"]:
+                return ToolResult(
+                    content=f"error: repeated stale patch_file old_text for {path}",
+                    metadata={**metadata, "ok": False, "repeated_call": True, "error_kind": "repeated_call"},
+                )
+
         if spec.requires_approval and self.approval_policy == "never":
             self._last_tool_signature = signature
             return ToolResult(
@@ -122,10 +135,20 @@ class ToolExecutor:
         self._last_tool_signature = signature
         extracted_metadata = _extract_tool_metadata(content)
         if extracted_metadata is not None:
+            clean_content = extracted_metadata.pop("__content__", content)
+            result_metadata = {**metadata, **extracted_metadata}
+            if (
+                patch_old_text_key is not None
+                and result_metadata.get("ok") is True
+                and result_metadata.get("error_kind") == "ok"
+            ):
+                self._patched_old_texts[patch_old_text_key] = args["new_text"]
             return ToolResult(
-                content=extracted_metadata.pop("__content__", content),
-                metadata={**metadata, **extracted_metadata},
+                content=clean_content,
+                metadata=result_metadata,
             )
+        if patch_old_text_key is not None:
+            self._patched_old_texts[patch_old_text_key] = args["new_text"]
         return ToolResult(
             content=content,
             metadata={**metadata, "ok": True, "error_kind": "ok"},

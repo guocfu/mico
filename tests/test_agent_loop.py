@@ -903,6 +903,94 @@ def test_success_then_same_call_is_repeated(tmp_path):
     assert second.metadata["repeated_call"] is True
 
 
+def test_patch_file_reusing_successful_old_text_in_same_file_is_repeated(tmp_path):
+    (tmp_path / "code.py").write_text("old\n", encoding="utf-8")
+    workspace = Workspace.build(tmp_path)
+    executor = ToolExecutor(workspace, approval_policy="auto")
+
+    first = executor.execute("patch_file", {
+        "path": "code.py",
+        "old_text": "old",
+        "new_text": "new",
+    })
+    second = executor.execute("patch_file", {
+        "path": "code.py",
+        "old_text": "old",
+        "new_text": "better",
+    })
+
+    assert first.metadata["error_kind"] == "ok"
+    assert second.metadata["error_kind"] == "repeated_call"
+    assert second.metadata["repeated_call"] is True
+    assert (tmp_path / "code.py").read_text(encoding="utf-8") == "new\n"
+
+
+def test_patch_file_same_old_text_in_different_files_is_allowed(tmp_path):
+    (tmp_path / "first.py").write_text("old\n", encoding="utf-8")
+    (tmp_path / "second.py").write_text("old\n", encoding="utf-8")
+    workspace = Workspace.build(tmp_path)
+    executor = ToolExecutor(workspace, approval_policy="auto")
+
+    first = executor.execute("patch_file", {
+        "path": "first.py",
+        "old_text": "old",
+        "new_text": "new",
+    })
+    second = executor.execute("patch_file", {
+        "path": "second.py",
+        "old_text": "old",
+        "new_text": "new",
+    })
+
+    assert first.metadata["error_kind"] == "ok"
+    assert second.metadata["error_kind"] == "ok"
+    assert (tmp_path / "first.py").read_text(encoding="utf-8") == "new\n"
+    assert (tmp_path / "second.py").read_text(encoding="utf-8") == "new\n"
+
+
+def test_patch_file_can_continue_from_current_content(tmp_path):
+    (tmp_path / "code.py").write_text("old\n", encoding="utf-8")
+    workspace = Workspace.build(tmp_path)
+    executor = ToolExecutor(workspace, approval_policy="auto")
+
+    first = executor.execute("patch_file", {
+        "path": "code.py",
+        "old_text": "old",
+        "new_text": "new",
+    })
+    second = executor.execute("patch_file", {
+        "path": "code.py",
+        "old_text": "new",
+        "new_text": "final",
+    })
+
+    assert first.metadata["error_kind"] == "ok"
+    assert second.metadata["error_kind"] == "ok"
+    assert (tmp_path / "code.py").read_text(encoding="utf-8") == "final\n"
+
+
+def test_patch_file_consumed_old_text_state_resets_between_runs(tmp_path):
+    (tmp_path / "code.py").write_text("old\n", encoding="utf-8")
+    workspace = Workspace.build(tmp_path)
+    executor = ToolExecutor(workspace, approval_policy="auto")
+
+    first = executor.execute("patch_file", {
+        "path": "code.py",
+        "old_text": "old",
+        "new_text": "new",
+    })
+    executor.reset_run_state()
+    second = executor.execute("patch_file", {
+        "path": "code.py",
+        "old_text": "old",
+        "new_text": "new",
+    })
+
+    assert first.metadata["error_kind"] == "ok"
+    assert second.metadata["error_kind"] == "already_applied"
+    assert second.metadata["repeated_call"] is False
+
+
 def test_long_tool_result_clipped_in_history(tmp_path):
     long_content = "x" * 5000
     (tmp_path / "big.txt").write_text(long_content + "\n", encoding="utf-8")
