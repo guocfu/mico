@@ -20,7 +20,7 @@
 
 - `mico` 是一个本地 coding agent，目标是在受控 workspace 内创建、修改、运行和验证代码。
 - 当前主路线见 `analysis/mico-resume-project-roadmap.md`。
-- 当前优先阶段是 P3 面试记忆系统，设计入口是 `analysis/mico-memory-context-design.md`。
+- 当前优先阶段是 P3 通用记忆系统，设计入口是 `analysis/mico-memory-context-design.md`。当前定稿方向是三层记忆：session 内 Working Memory、session 内 Episodic Notes、跨 session Durable Memory。
 - 默认 provider 是 `FakeModelClient`，可选真实模型 provider 是 `openai-compatible`。
 - 核心闭环已经存在：
   - CLI 接收任务；
@@ -45,7 +45,7 @@
 - `patch_file(path, old_text, new_text)`：精确文本替换，受 approval policy 控制。
 - `write_file(path, content)`：创建或覆盖 UTF-8 文件，受 approval policy 控制。
 - `run_command(argv, timeout=30)`：以 `shell=False` 在 workspace root 执行命令，受 approval policy 控制。
-- P3 可按 Codex 定稿设计实现 `remember(topic, note, tags)`，用于显式写入 `.mico/memory/` 面试长期记忆。
+- P3 可按 Codex 定稿设计实现 `remember(topic, note, tags)`，用于显式写入 `.mico/memory/` 长期稳定记忆。
 
 所有路径必须限制在 workspace 内，禁止 `..` 或绝对路径逃逸。`patch_file` 要求 `old_text` 在文件中恰好出现一次。
 
@@ -80,7 +80,7 @@ subprocess.run(
 - 不做复杂权限 UI。
 - 后台任务、任务队列或 Web UI。
 
-说明：面试长期记忆、任务内 WorkingMemory 和 ContextManager 已进入 P3 当前主线，但仍需按 `analysis/mico-memory-context-design.md` 的边界实现。checkpoint/resume、embedding/vector DB、后台自动记忆抽取和远程 memory store 仍不做。
+说明：三层记忆、SessionStore 和 ContextManager 已进入 P3 当前主线，但仍需按 `analysis/mico-memory-context-design.md` 的边界实现。不要用全量旧 `Mico.history` 注入 prompt 来解决跨 run 理解；跨 run 自动积累应通过 SessionMemoryState 和 episodic notes 完成。checkpoint/resume、embedding/vector DB、后台自动记忆抽取和远程 memory store 仍不做。
 
 ## 工作方式
 
@@ -113,6 +113,6 @@ python -m mico "列出当前目录"
 
 - `analysis/pico-security-and-tools.md`：pico 安全与工具执行层迁移分析。
 - `analysis/pico-author-notes.md`：pico 作者笔记、项目定位与 mico 演进方向。
-- `analysis/mico-resume-project-roadmap.md`：后续主执行路线，当前进入 P3 面试记忆系统。
-- `analysis/mico-memory-context-design.md`：Codex 当前定稿方向，设计 `.mico/memory/` 面试长期记忆、任务内 WorkingMemory、ContextManager 和 prompt 预算治理。
+- `analysis/mico-resume-project-roadmap.md`：后续主执行路线，当前进入 P3 通用记忆系统。
+- `analysis/mico-memory-context-design.md`：Codex 当前定稿方向，设计三层记忆系统（Working Memory、Episodic Notes、Durable Memory）、SessionStore、ContextManager 和 prompt 预算治理。
 - `analysis/mico-improvement-framework.md`：历史技术分析，保留作为参考，不再作为主执行路线。

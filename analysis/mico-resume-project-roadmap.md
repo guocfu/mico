@@ -2,7 +2,7 @@
 
 > 日期：2026-06-24
 > 状态：后续主执行路线
-> 进度：P0、P1、P2 核心闭环已完成；下一步进入 P3 面试记忆系统
+> 进度：P0、P1、P2 核心闭环已完成；下一步进入 P3 通用记忆系统
 > 说明：`analysis/mico-improvement-framework.md` 保留为历史技术分析；`analysis/claude code.md` 和 Opus 4.8 架构评审作为本次重定位参考。后续功能迭代、Claude Code 实现任务和 Codex 审查，优先以本文为准。
 
 ## 当前进度
@@ -10,13 +10,13 @@
 - **P0**：已完成。文档已同步，协作规则已建立。
 - **P1**：已完成。`write_file`、`run_command`、provider 自动选择、prompt 更新均已实现并通过测试。
 - **P2 核心闭环**：已打通。mico 能在真实模型下完成创建/修改/测试/修复的完整任务链路。
-- **P3**：下一步。面向面试需要，实现可落地的本地记忆系统和任务内上下文治理。
+- **P3**：下一步。面向通用 coding agent，实现可落地的本地记忆系统和任务内上下文治理。
 
 ## 1. 项目定位
 
 `mico` 的目标是做一个**能在本地仓库里实际完成代码任务的 CLI coding agent**。
 
-它首先要能用，其次才是好测试、好复盘、好写进简历。当前项目已有模型调用、工具循环、workspace 沙箱、运行工件和 benchmark 基础，且已具备两个实际 coding agent 的最低能力：
+它首先要能用，其次才是好测试、好复盘、好展示。当前项目已有模型调用、工具循环、workspace 沙箱、运行工件和 benchmark 基础，且已具备两个实际 coding agent 的最低能力：
 
 - 创建新文件（`write_file` 已实现）。
 - 运行项目命令并根据失败输出继续修复（`run_command` 已实现）。
@@ -45,9 +45,9 @@
 2. 能运行测试、lint 或脚本。
 3. 能看懂失败输出并继续修复。
 4. 能留下可审计的运行记录。
-5. 能在面试准备中持续记住稳定事实、项目经历、JD 和反馈。
+5. 能持续记住用户偏好、项目约定、关键决策和任务上下文。
 
-当前主线进入面试记忆系统。上下文治理、文件摘要和结构化记忆不再作为展示包装之后的 Backlog，而是 P3 的核心能力；checkpoint/resume 和行区间编辑仍暂缓。
+当前主线进入通用记忆系统。上下文治理、文件摘要和结构化记忆不再作为展示包装之后的 Backlog，而是 P3 的核心能力；checkpoint/resume 和行区间编辑仍暂缓。
 
 ### 2.2 工具能力要受控，不要因安全焦虑取消能力
 
@@ -66,9 +66,9 @@
 - `MICO_BASE_URL` 和 `MICO_MODEL` 应有合理默认值。
 - `--provider fake` 必须保留，用于离线测试、deterministic benchmark 和 CI。
 
-### 2.4 面试记忆系统优先于展示包装
+### 2.4 通用记忆系统优先于展示包装
 
-P1-P2 已证明 mico 具备最小 coding agent 闭环。当前更有价值的是把 memory 做成真实可用的面试准备能力：能记住用户背景、简历卖点、项目素材、目标 JD 和面试反馈，并在后续任务中自动带入相关上下文。
+P1-P2 已证明 mico 具备最小 coding agent 闭环。当前更有价值的是把 memory 做成真实可用的 agent 基础能力：能记住用户偏好、项目约定、关键决策、近期文件和任务观察，并在后续任务中自动带入相关上下文。
 
 ## 3. 核心架构
 
@@ -232,7 +232,7 @@ P1 只更新静态前缀和工具说明，不做复杂 prompt 优化。
 
 验收：
 
-- 文档不再把简历或评测作为第一目标。
+- 文档不再把展示包装或评测作为第一目标。
 - 禁止范围不再禁止 `write_file` 和命令执行。
 - 明确 `run_command` 使用 argv 和 `shell=False`。
 - `AGENTS.md` 删除或修正禁止 `write_file` / 命令执行的旧描述，并说明 Codex 必须审查 `run_command` 安全边界。
@@ -298,26 +298,26 @@ P1 只更新静态前缀和工具说明，不做复杂 prompt 优化。
 - 运行工件包含 `trace.jsonl`、`state.json`、`report.json`，可复盘。
 - 核心闭环（任务 -> 读代码 -> 写文件 -> 运行命令 -> 修复失败 -> 生成报告）已打通。
 
-### P3：面试记忆系统
+### P3：通用记忆系统
 
 目标：
 
-- mico 能服务真实面试准备，而不是只做一次性 coding demo。
-- 跨 run 记住用户背景、简历、项目经历、目标岗位和面试反馈。
+- mico 能服务真实 coding agent 使用，而不是只做一次性 coding demo。
+- 跨 run 记住用户偏好、项目约定、关键决策和任务观察。
 - 单次 run 内压缩历史、摘要文件、控制 prompt 预算，避免长任务上下文失控。
 
 产物：
 
 - `.mico/memory/` 本地 Markdown 记忆目录。
-- 固定 topic：`profile/resume/projects/targets/feedback/preferences`。
-- `remember` 工具，用于显式写入长期面试记忆。
+- 固定 topic：`profile/projects/preferences/decisions/conventions/notes`。
+- `remember` 工具，用于显式写入长期稳定记忆。
 - `WorkingMemory`：任务摘要、最近文件、文件摘要、freshness。
 - `ContextManager`：section 预算、相关记忆注入、history 压缩、prompt metadata。
 - 对应测试：memory store、中文召回、freshness、history 压缩、隐私字段不进 trace/report。
 
 验收：
 
-- 用户可以要求 mico 记住目标岗位或项目经历。
+- 用户可以要求 mico 记住项目约定、技术决策或个人偏好。
 - 下一次任务中，mico 能自动注入相关记忆。
 - 用户当前请求在任何预算压力下都完整保留。
 - 记忆正文不写入 trace/report。
@@ -347,10 +347,10 @@ pico 是否需要这个能力？如果不需要，mico 当前为什么需要？
 P0、P1、P2 核心闭环已完成。当前应进入：
 
 ```text
-P3：面试记忆系统
+P3：通用记忆系统
 ```
 
-P3 的设计入口是 `analysis/mico-memory-context-design.md`。实现应先做可落地的长期面试记忆最小闭环，再做任务内 WorkingMemory 和 ContextManager。
+P3 的设计入口是 `analysis/mico-memory-context-design.md`。实现应先做可落地的 SessionStore 和 SessionMemoryState，再做 DurableMemory 与 ContextManager。
 
 ## 7. Claude Code 协作要求
 
