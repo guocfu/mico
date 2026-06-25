@@ -301,6 +301,30 @@ def test_repl_output_thinking_and_tool_and_ok(monkeypatch, capsys):
     assert "tool" in captured.out
 
 
+def test_repl_output_shows_run_id_and_run_dir(monkeypatch, capsys):
+    class RunIdAgent(ProgressAgent):
+        def ask(self, message):
+            self.ask_calls.append(message)
+            cb = self.event_callback
+            if cb:
+                cb("run_started", {"run_id": "abc123", "run_dir": ".mico\\runs\\abc123"})
+                cb("thinking", {})
+                cb("run_finished", {"run_id": "abc123", "final_summary": "done"})
+            return "done"
+
+    agent = RunIdAgent()
+    _patch_build_agent_with_progress(monkeypatch, agent)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", _make_input_side_effect(["hello", EOFError()]))
+
+    main([])
+
+    captured = capsys.readouterr()
+    assert "abc123" in captured.out
+    assert ".mico" in captured.out
+    assert "runs" in captured.out
+
+
 def test_one_shot_does_not_print_progress(monkeypatch, capsys):
     """One-shot mode prints only the final answer, no progress lines."""
     agent = ProgressAgent()

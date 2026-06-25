@@ -187,6 +187,24 @@ class TestPatchFile:
             })
 
 
+def test_patch_file_already_applied_returns_metadata_ok(tmp_path):
+    (tmp_path / "code.py").write_text("new\n", encoding="utf-8")
+    workspace = Workspace.build(tmp_path)
+
+    result = run_tool(workspace, "patch_file", {
+        "path": "code.py",
+        "old_text": "old",
+        "new_text": "new",
+    })
+
+    parsed = json.loads(result)
+    assert parsed["__tool_metadata__"]["ok"] is True
+    assert parsed["__tool_metadata__"]["error_kind"] == "already_applied"
+    assert parsed["__tool_metadata__"]["already_applied"] is True
+    assert parsed["path"] == "code.py"
+    assert (tmp_path / "code.py").read_text(encoding="utf-8") == "new\n"
+
+
 class TestWriteFile:
     def test_creates_new_file(self, tmp_path):
         workspace = Workspace.build(tmp_path)

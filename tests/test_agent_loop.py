@@ -71,6 +71,31 @@ def test_agent_loop_retries_malformed_model_output(tmp_path):
     assert agent.history[1]["content"] == "model returned neither <tool> nor <final>"
 
 
+def test_plain_text_after_successful_patch_file_finishes(tmp_path):
+    (tmp_path / "code.py").write_text("old\n", encoding="utf-8")
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"patch_file","args":{"path":"code.py","old_text":"old","new_text":"new"}}</tool>',
+            "文件已更新。",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    answer = agent.ask("fix code")
+
+    assert answer == "文件已更新。"
+    assert (tmp_path / "code.py").read_text(encoding="utf-8") == "new\n"
+    assert agent.history[-1]["role"] == "assistant"
+    assert agent.history[-1]["content"] == "文件已更新。"
+    assert all(item.get("content") != "model returned neither <tool> nor <final>" for item in agent.history)
+    run_dirs = list((tmp_path / ".mico" / "runs").iterdir())
+    state = json.loads((run_dirs[0] / "state.json").read_text(encoding="utf-8"))
+    assert state["status"] == "success"
+    assert state["stop_reason"] == "final"
+
+
 def test_agent_loop_executes_patch_file(tmp_path):
     (tmp_path / "code.py").write_text("old content\n", encoding="utf-8")
     workspace = Workspace.build(tmp_path)
@@ -228,6 +253,30 @@ def test_repeated_consecutive_patch_file_no_second_edit(tmp_path):
     assert (tmp_path / "code.py").read_text(encoding="utf-8") == "new\n"
     assert "patched" in agent.history[1]["content"]
     assert "repeated" in agent.history[2]["content"]
+
+
+def test_patch_file_same_change_absolute_then_relative_is_already_applied(tmp_path):
+    (tmp_path / "code.py").write_text("old\n", encoding="utf-8")
+    absolute_path = str(tmp_path / "code.py")
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient([
+            f'<tool>{{"name":"patch_file","args":{{"path":{json.dumps(absolute_path)},"old_text":"old","new_text":"new"}}}}</tool>',
+            '<tool>{"name":"patch_file","args":{"path":"code.py","old_text":"old","new_text":"new"}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    answer = agent.ask("patch twice")
+
+    assert answer == "done"
+    assert (tmp_path / "code.py").read_text(encoding="utf-8") == "new\n"
+    assert agent.history[1]["metadata"]["error_kind"] == "ok"
+    assert agent.history[2]["metadata"]["ok"] is True
+    assert agent.history[2]["metadata"]["error_kind"] == "already_applied"
+    assert agent.history[2]["metadata"]["already_applied"] is True
 
 
 def test_same_name_different_args_allowed(tmp_path):
@@ -481,6 +530,54 @@ def test_report_includes_restricted_tools_and_tool_call_summary(tmp_path):
     assert report["patches_applied"] == 0
 
 
+def test_report_counts_only_current_repl_run_history(tmp_path):
+    (tmp_path / "first.txt").write_text("old\n", encoding="utf-8")
+    (tmp_path / "second.txt").write_text("old\n", encoding="utf-8")
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"patch_file","args":{"path":"first.txt","old_text":"old","new_text":"new"}}</tool>',
+            "<final>first</final>",
+            '<tool>{"name":"patch_file","args":{"path":"second.txt","old_text":"missing","new_text":"new"}}</tool>',
+            "<final>second</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    assert agent.ask("first run") == "first"
+    assert agent.ask("second run") == "second"
+
+    second_report = json.loads(
+        (agent.run_store.run_dir(agent._last_task_state) / "report.json").read_text(encoding="utf-8")
+    )
+    assert second_report["tool_call_summary"] == {"validation_error": 1}
+    assert second_report["changed_files"] == []
+    assert second_report["patches_applied"] == 0
+
+
+def test_report_does_not_count_already_applied_patch_as_new_change(tmp_path):
+    (tmp_path / "code.py").write_text("new\n", encoding="utf-8")
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"patch_file","args":{"path":"code.py","old_text":"old","new_text":"new"}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    assert agent.ask("patch already applied") == "done"
+
+    report = json.loads(
+        (agent.run_store.run_dir(agent._last_task_state) / "report.json").read_text(encoding="utf-8")
+    )
+    assert report["tool_call_summary"] == {"already_applied": 1}
+    assert report["changed_files"] == []
+    assert report["patches_applied"] == 0
+
+
 def test_report_includes_changed_files_for_successful_patch(tmp_path):
     (tmp_path / "code.py").write_text("old\n", encoding="utf-8")
     workspace = Workspace.build(tmp_path)
@@ -586,6 +683,32 @@ def test_max_steps_rejects_extra_tool_after_budget(tmp_path):
     state = json.loads((run_dirs[0] / "state.json").read_text(encoding="utf-8"))
     assert state["tool_steps"] == 1
     assert state["stop_reason"] == "step_limit"
+
+
+def test_step_limit_takes_precedence_when_attempt_limit_also_reached(tmp_path):
+    (tmp_path / "a.txt").write_text("aaa\n", encoding="utf-8")
+    (tmp_path / "b.txt").write_text("bbb\n", encoding="utf-8")
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"read_file","args":{"path":"a.txt","start":1,"end":80}}</tool>',
+            "not xml 1",
+            "not xml 2",
+            '<tool>{"name":"read_file","args":{"path":"b.txt","start":1,"end":80}}</tool>',
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+        max_steps=1,
+    )
+
+    answer = agent.ask("read too many files")
+
+    assert answer == "Stopped after reaching the step limit."
+    run_dirs = list((tmp_path / ".mico" / "runs").iterdir())
+    state = json.loads((run_dirs[0] / "state.json").read_text(encoding="utf-8"))
+    report = json.loads((run_dirs[0] / "report.json").read_text(encoding="utf-8"))
+    assert state["stop_reason"] == "step_limit"
+    assert report["failure_category"] == "step_limit"
 
 
 def test_model_error_produces_state_trace_report(tmp_path):

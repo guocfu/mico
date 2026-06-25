@@ -228,6 +228,20 @@ def _patch_file(workspace, args):
     content = path.read_text(encoding="utf-8")
     count = content.count(old_text)
     if count == 0:
+        new_count = content.count(new_text)
+        if new_count == 1:
+            metadata = {
+                "ok": True,
+                "error_kind": "already_applied",
+                "already_applied": True,
+            }
+            return json.dumps({
+                "__tool_metadata__": metadata,
+                "path": workspace.relative(path),
+                "already_applied": True,
+            }, ensure_ascii=False)
+        if new_count > 1:
+            raise ValueError("old_text not found and new_text found multiple times")
         raise ValueError("old_text not found in file")
     if count > 1:
         raise ValueError(f"old_text found {count} times, expected exactly 1")

@@ -65,7 +65,9 @@ class PromptBuilder:
             "Respond with exactly one XML block per turn:\n"
             '<tool>{"name":"tool_name","args":{}}</tool>\n'
             "<final>answer</final>\n"
-            "No text outside the XML block. Do not explain or narrate between tool calls."
+            "No text outside the XML block. Do not explain or narrate between tool calls.\n"
+            "Do not repeat the same tool call with the same arguments if it did not help. "
+            "Choose a different tool or return a final answer."
         )
 
     @staticmethod
@@ -124,4 +126,7 @@ class PromptBuilder:
 
     @staticmethod
     def _format_reminder():
-        return "Reminder: respond with exactly one <tool> or <final> block. No prose outside the block."
+        return (
+            "Reminder: respond with exactly one <tool> or <final> block. No prose outside the block.\n"
+            "After creating or editing a file, state what you did in one sentence. Do not restate the contents or walk through changes."
+        )

@@ -19,6 +19,7 @@ class Mico:
         self._model_output_parser = ModelOutputParser()
         self._last_parser_error_kind = None
         self._last_task_state = None
+        self._last_run_history_start = 0
         self.event_callback = event_callback
 
     def emit_ui_event(self, event_type, payload=None):
@@ -71,7 +72,10 @@ class Mico:
         self._last_prompt_metadata = bundle.metadata
         return bundle
 
-    def build_report(self, task_state, verification_result=None):
+    def build_report(self, task_state, verification_result=None, history_start=None):
+        if history_start is None:
+            history_start = self._last_run_history_start
+        report_history = self.history[history_start:]
         tool_call_summary = {}
         last_error_kind = None
         changed_files = []
@@ -80,14 +84,18 @@ class Mico:
         files_written = []
         files_written_set = set()
         commands_run = []
-        for item in self.history:
+        for item in report_history:
             if item.get("role") != "tool":
                 continue
             error_kind = item.get("metadata", {}).get("error_kind", "unknown")
             tool_call_summary[error_kind] = tool_call_summary.get(error_kind, 0) + 1
             if error_kind != "ok":
                 last_error_kind = error_kind
-            if item.get("name") == "patch_file" and item.get("metadata", {}).get("ok") is True:
+            if (
+                item.get("name") == "patch_file"
+                and item.get("metadata", {}).get("ok") is True
+                and item.get("metadata", {}).get("error_kind") == "ok"
+            ):
                 patches_applied += 1
                 path = item.get("args", {}).get("path")
                 if path and path not in changed_file_set:
@@ -118,7 +126,7 @@ class Mico:
             "artifacts_version": "1",
             "task_state": task_state.to_dict(),
             "failure_category": self._failure_category(task_state, last_error_kind),
-            "history_items": len(self.history),
+            "history_items": len(report_history),
             "workspace_root": str(self.workspace.root),
             "approval_policy": self.approval_policy,
             "available_tools": available_tools,

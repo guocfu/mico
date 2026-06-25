@@ -71,6 +71,19 @@ def test_prompt_contains_sections():
     assert "Recent history:" in text
 
 
+def test_prompt_contract_warns_not_to_repeat_successful_tool_call():
+    builder = PromptBuilder()
+    bundle = builder.build(
+        tool_catalog=_sample_catalog(),
+        approval_policy="auto",
+        workspace_root="/tmp/ws",
+        user_message="inspect files",
+        history=[],
+    )
+
+    assert "Do not repeat the same tool call with the same arguments if it did not help." in bundle.text
+
+
 def test_prompt_empty_history_shows_empty():
     builder = PromptBuilder()
     bundle = builder.build(
@@ -215,6 +228,50 @@ def test_prompt_contains_shell_guidance():
     )
     assert "Guidance:" in bundle.text
     assert "OS" in bundle.text
+
+
+def test_prompt_warns_not_to_repeat_successful_write_tools():
+    builder = PromptBuilder()
+    bundle = builder.build(
+        tool_catalog=_sample_catalog(),
+        approval_policy="auto",
+        workspace_root="/tmp/ws",
+        user_message="write file",
+        history=[
+            {"role": "tool", "name": "patch_file", "content": "patched code.py"},
+        ],
+    )
+
+    assert "After creating or editing a file, state what you did in one sentence." in bundle.text
+    assert "Do not restate the contents or walk through changes." in bundle.text
+
+
+def test_prompt_chose_different_tool_or_final():
+    builder = PromptBuilder()
+    bundle = builder.build(
+        tool_catalog=_sample_catalog(),
+        approval_policy="auto",
+        workspace_root="/tmp/ws",
+        user_message="fix code",
+        history=[],
+    )
+    assert "Choose a different tool or return a final answer." in bundle.text
+
+
+def test_prompt_does_not_contain_old_long_reminders():
+    builder = PromptBuilder()
+    bundle = builder.build(
+        tool_catalog=_sample_catalog(),
+        approval_policy="auto",
+        workspace_root="/tmp/ws",
+        user_message="fix code",
+        history=[
+            {"role": "tool", "name": "patch_file", "content": "patched code.py"},
+        ],
+    )
+    assert "If you need confidence" not in bundle.text
+    assert "successful patch_file or write_file" not in bundle.text
+    assert "do not call the same write again" not in bundle.text
 
 
 def test_detect_available_shells_returns_list():

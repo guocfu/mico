@@ -200,7 +200,9 @@ def build_console_renderer():
 
     def _render(etype, payload):
         p = payload or {}
-        if etype == "thinking":
+        if etype == "run_started":
+            print(f"mico: run {p.get('run_id', '?')} log={p.get('run_dir', '?')}")
+        elif etype == "thinking":
             print("mico: thinking...")
         elif etype == "tool_started":
             name = p.get("name", "?")
@@ -230,6 +232,10 @@ def build_console_renderer():
         elif etype == "retry":
             error_kind = p.get("error_kind", "retry")
             print(f"mico: retry {error_kind}")
+        elif etype == "run_finished":
+            run_id = p.get("run_id")
+            if run_id:
+                print(f"mico: done run={run_id}")
 
     return _render
 
