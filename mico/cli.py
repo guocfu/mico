@@ -15,7 +15,7 @@ def build_arg_parser():
     parser = argparse.ArgumentParser(description="mico - a local coding agent that creates, modifies, runs and verifies code.")
     parser.add_argument("prompt", nargs="*", help="One-shot prompt.")
     parser.add_argument("--cwd", default=".", help="Workspace directory.")
-    parser.add_argument("--max-steps", type=int, default=4, help="Maximum model/tool iterations.")
+    parser.add_argument("--max-steps", type=int, default=8, help="Maximum model/tool iterations.")
     parser.add_argument(
         "--approval",
         choices=("auto", "ask", "never"),
