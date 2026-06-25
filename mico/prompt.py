@@ -38,6 +38,7 @@ class PromptBuilder:
             f"{self._workspace_context(workspace_root)}\n"
             f"{self._current_request(user_message)}\n"
             f"{self._recent_history(recent)}\n"
+            f"{self._format_reminder()}\n"
         )
 
         tool_count = len(tool_catalog)
@@ -63,7 +64,8 @@ class PromptBuilder:
         return (
             "Respond with exactly one XML block per turn:\n"
             '<tool>{"name":"tool_name","args":{}}</tool>\n'
-            "<final>answer</final>"
+            "<final>answer</final>\n"
+            "No text outside the XML block. Do not explain or narrate between tool calls."
         )
 
     @staticmethod
@@ -119,3 +121,7 @@ class PromptBuilder:
             else:
                 lines.append(f"{role}: {content}")
         return "Recent history:\n" + "\n".join(lines)
+
+    @staticmethod
+    def _format_reminder():
+        return "Reminder: respond with exactly one <tool> or <final> block. No prose outside the block."
