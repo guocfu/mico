@@ -55,21 +55,77 @@ def build_arg_parser():
     return parser
 
 
+def _canonical_shell_name(name):
+    prog = Path(str(name)).name.lower()
+    if prog.endswith(".exe"):
+        prog = prog[:-4]
+    return prog
+
+
+def _first_command_token(command):
+    text = str(command).strip()
+    if not text:
+        return "(empty)"
+    quote = text[0] if text[0] in ("'", '"') else None
+    if quote:
+        end = text.find(quote, 1)
+        if end > 1:
+            return text[1:end].lower()
+        text = text[1:]
+    return text.split()[0].lower() if text.split() else "(empty)"
+
+
+def _approval_prefix(argv):
+    if not argv:
+        return "(empty)"
+    shell = _canonical_shell_name(argv[0])
+    flag = ""
+    command = ""
+    if len(argv) >= 2:
+        candidate = str(argv[1]).lower()
+        if shell == "cmd" and candidate in ("/c", "/k"):
+            flag = candidate
+            command = argv[2] if len(argv) >= 3 else ""
+        elif shell in ("powershell", "pwsh") and candidate in ("-command", "-c"):
+            flag = candidate
+            command = argv[2] if len(argv) >= 3 else ""
+        elif shell in ("bash", "sh") and candidate == "-c":
+            flag = candidate
+            command = argv[2] if len(argv) >= 3 else ""
+        else:
+            command = argv[1]
+    token = _first_command_token(command)
+    return " ".join(part for part in (shell, flag, token) if part)
+
+
 def make_approval_callback(interactive, cwd=None):
     """Create an approval callback for shell command authorization.
 
     Returns a callable(argv) -> bool.
-    In interactive mode, prompts user with cwd/argv and requires y/yes.
+    In interactive mode, prompts user with cwd/argv and supports:
+    y/yes for one-time approval, a/always for session prefix approval.
     In non-interactive mode, always denies shell commands.
     """
+    allowed_prefixes = set()
+
     def _callback(argv):
         if not interactive:
             return False
-        prompt = f"Allow shell command? cwd={cwd} argv={argv}\n  Confirm [y/yes]: "
+        prefix = _approval_prefix(argv)
+        if prefix in allowed_prefixes:
+            return True
+        prompt = (
+            f"Allow shell command? cwd={cwd} argv={argv}\n"
+            f"  Similar prefix: {prefix}\n"
+            "  Confirm [y/yes], always allow similar [a/always], deny [n/no]: "
+        )
         try:
             answer = input(prompt).strip().lower()
         except (EOFError, KeyboardInterrupt):
             return False
+        if answer in ("a", "always"):
+            allowed_prefixes.add(prefix)
+            return True
         return answer in ("y", "yes")
 
     return _callback

@@ -142,6 +142,88 @@ def test_cli_approval_callback_approves_yes_full(monkeypatch):
     assert callback(["cmd", "/c", "dir"]) is True
 
 
+def test_cli_approval_callback_yes_does_not_cache(monkeypatch):
+    from mico.cli import make_approval_callback
+    answers = iter(["y", "n"])
+    prompts = []
+
+    def _input(prompt=""):
+        prompts.append(prompt)
+        return next(answers)
+
+    callback = make_approval_callback(interactive=True)
+    monkeypatch.setattr("builtins.input", _input)
+
+    assert callback(["cmd", "/c", "dir"]) is True
+    assert callback(["cmd", "/c", "dir /b"]) is False
+    assert len(prompts) == 2
+
+
+def test_cli_approval_callback_always_caches_same_prefix(monkeypatch):
+    from mico.cli import make_approval_callback
+    prompts = []
+
+    def _input(prompt=""):
+        prompts.append(prompt)
+        return "a"
+
+    callback = make_approval_callback(interactive=True)
+    monkeypatch.setattr("builtins.input", _input)
+
+    assert callback(["cmd", "/c", "dir"]) is True
+    assert callback(["cmd", "/c", "dir /b"]) is True
+    assert len(prompts) == 1
+
+
+def test_cli_approval_callback_always_caches_prefix_case_insensitive(monkeypatch):
+    from mico.cli import make_approval_callback
+    answers = iter(["always", "n"])
+    prompts = []
+
+    def _input(prompt=""):
+        prompts.append(prompt)
+        return next(answers)
+
+    callback = make_approval_callback(interactive=True)
+    monkeypatch.setattr("builtins.input", _input)
+
+    assert callback(["cmd", "/c", "dir"]) is True
+    assert callback(["cmd", "/c", "DIR /B"]) is True
+    assert len(prompts) == 1
+
+
+def test_cli_approval_callback_always_does_not_cache_different_prefix(monkeypatch):
+    from mico.cli import make_approval_callback
+    answers = iter(["always", "n"])
+    prompts = []
+
+    def _input(prompt=""):
+        prompts.append(prompt)
+        return next(answers)
+
+    callback = make_approval_callback(interactive=True)
+    monkeypatch.setattr("builtins.input", _input)
+
+    assert callback(["cmd", "/c", "dir"]) is True
+    assert callback(["cmd", "/c", "type README.md"]) is False
+    assert len(prompts) == 2
+
+
+def test_cli_approval_callback_prompt_shows_cached_prefix(monkeypatch):
+    from mico.cli import make_approval_callback
+    prompts = []
+
+    def _input(prompt=""):
+        prompts.append(prompt)
+        return "n"
+
+    callback = make_approval_callback(interactive=True)
+    monkeypatch.setattr("builtins.input", _input)
+
+    assert callback(["powershell", "-Command", "pytest -q"]) is False
+    assert "powershell -command pytest" in prompts[0].lower()
+
+
 def test_cli_approval_callback_denies_no(monkeypatch):
     from mico.cli import make_approval_callback
     callback = make_approval_callback(interactive=True)
