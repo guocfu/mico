@@ -1,7 +1,7 @@
 import json
 from dataclasses import dataclass, field
 
-from .tools import TOOL_SPECS, execute_validated_tool, validate_tool
+from .tools import TOOL_SPECS, execute_validated_tool, is_shell_interpreter, validate_tool
 
 
 @dataclass(frozen=True)
@@ -28,9 +28,10 @@ def _extract_tool_metadata(content):
 
 
 class ToolExecutor:
-    def __init__(self, workspace, approval_policy="auto"):
+    def __init__(self, workspace, approval_policy="auto", approval_callback=None):
         self.workspace = workspace
         self.approval_policy = approval_policy
+        self.approval_callback = approval_callback
         self._last_tool_signature = None
 
     def reset_run_state(self):
@@ -95,10 +96,21 @@ class ToolExecutor:
             )
 
         if spec.requires_approval and self.approval_policy == "never":
+            self._last_tool_signature = signature
             return ToolResult(
                 content=f"error: tool {name} is not allowed under approval=never",
                 metadata={**metadata, "ok": False, "blocked_by_approval": True, "error_kind": "approval_denied"},
             )
+
+        if spec.requires_approval and self.approval_policy == "ask" and name == "run_command":
+            argv = args.get("argv", [])
+            if is_shell_interpreter(argv):
+                if self.approval_callback is None or not self.approval_callback(argv):
+                    self._last_tool_signature = signature
+                    return ToolResult(
+                        content=f"error: shell command not approved: {argv[0]}",
+                        metadata={**metadata, "ok": False, "blocked_by_approval": True, "error_kind": "approval_denied"},
+                    )
 
         try:
             content = execute_validated_tool(self.workspace, name, args)

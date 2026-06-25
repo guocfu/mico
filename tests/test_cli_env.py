@@ -96,3 +96,24 @@ def test_explicit_fake_provider_overrides_dotenv(monkeypatch, tmp_path):
     agent = build_agent(args)
 
     assert isinstance(agent.model_client, FakeModelClient)
+
+
+def test_default_approval_is_ask():
+    args = _parse("hello")
+    assert args.approval == "ask"
+
+
+def test_approval_cli_override_auto():
+    args = _parse("hello --approval auto")
+    assert args.approval == "auto"
+
+
+def test_approval_cli_override_never():
+    args = _parse("hello --approval never")
+    assert args.approval == "never"
+
+
+def test_approval_choices_include_ask():
+    args = _parse("hello")
+    # Should not raise; "ask" is a valid choice
+    assert args.approval in ("auto", "ask", "never")

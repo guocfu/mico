@@ -6,14 +6,14 @@ from .tool_executor import ToolExecutor
 
 
 class Mico:
-    def __init__(self, model_client, workspace, run_store, approval_policy="auto", max_steps=4):
+    def __init__(self, model_client, workspace, run_store, approval_policy="auto", max_steps=4, approval_callback=None):
         self.model_client = model_client
         self.workspace = workspace
         self.run_store = run_store
         self.approval_policy = approval_policy
         self.max_steps = max_steps
         self.history = []
-        self.tool_executor = ToolExecutor(workspace, approval_policy=approval_policy)
+        self.tool_executor = ToolExecutor(workspace, approval_policy=approval_policy, approval_callback=approval_callback)
         self._prompt_builder = PromptBuilder()
         self._last_prompt_metadata = None
         self._model_output_parser = ModelOutputParser()

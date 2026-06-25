@@ -16,6 +16,19 @@ class ToolSpec:
     max_result_chars: int = 4000
 
 
+SHELL_INTERPRETERS = frozenset({
+    "cmd", "cmd.exe", "powershell", "powershell.exe",
+    "pwsh", "pwsh.exe", "bash", "bash.exe", "sh", "sh.exe",
+})
+
+
+def is_shell_interpreter(argv):
+    if not argv:
+        return False
+    prog = Path(argv[0]).name.lower()
+    return prog in SHELL_INTERPRETERS
+
+
 TOOL_SPECS = {
     "list_files": ToolSpec("List files in the workspace.", '{"path": "str=."}'),
     "read_file": ToolSpec("Read a UTF-8 file by line range.", '{"path": "str", "start": "int=1", "end": "int=80"}'),
@@ -124,13 +137,6 @@ def validate_tool(workspace, name, args):
         for i, elem in enumerate(argv):
             if not isinstance(elem, str):
                 raise ValueError(f"argv[{i}] must be a string, got {type(elem).__name__}")
-        _SHELL_INTERPRETERS = {
-            "cmd", "cmd.exe", "powershell", "powershell.exe",
-            "pwsh", "pwsh.exe", "bash", "bash.exe", "sh", "sh.exe",
-        }
-        prog = Path(argv[0]).name.lower()
-        if prog in _SHELL_INTERPRETERS:
-            raise ValueError(f"shell interpreter not allowed: {argv[0]}")
         raw_timeout = args.get("timeout", 30)
         if isinstance(raw_timeout, bool) or not isinstance(raw_timeout, int):
             raise ValueError(f"timeout must be an integer, got {type(raw_timeout).__name__}")

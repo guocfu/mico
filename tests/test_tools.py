@@ -313,35 +313,16 @@ class TestRunCommand:
         with pytest.raises(ValueError, match="string"):
             run_tool(workspace, "run_command", {"argv": [1, 2]})
 
-    def test_rejects_shell_interpreter_cmd(self, tmp_path):
+    @pytest.mark.parametrize("interpreter", [
+        "cmd", "cmd.exe", "powershell", "powershell.exe",
+        "pwsh", "pwsh.exe", "bash", "bash.exe", "sh", "sh.exe",
+    ])
+    def test_shell_interpreter_passes_validation(self, tmp_path, interpreter):
+        """Shell interpreters are no longer hard-rejected by validate_tool."""
+        from mico.tools import validate_tool
         workspace = Workspace.build(tmp_path)
-        with pytest.raises(ValueError, match="shell"):
-            run_tool(workspace, "run_command", {"argv": ["cmd", "/c", "dir"]})
-
-    def test_rejects_shell_interpreter_cmd_exe(self, tmp_path):
-        workspace = Workspace.build(tmp_path)
-        with pytest.raises(ValueError, match="shell"):
-            run_tool(workspace, "run_command", {"argv": ["cmd.exe", "/c", "dir"]})
-
-    def test_rejects_shell_interpreter_powershell(self, tmp_path):
-        workspace = Workspace.build(tmp_path)
-        with pytest.raises(ValueError, match="shell"):
-            run_tool(workspace, "run_command", {"argv": ["powershell", "-c", "dir"]})
-
-    def test_rejects_shell_interpreter_pwsh(self, tmp_path):
-        workspace = Workspace.build(tmp_path)
-        with pytest.raises(ValueError, match="shell"):
-            run_tool(workspace, "run_command", {"argv": ["pwsh", "-c", "dir"]})
-
-    def test_rejects_shell_interpreter_bash(self, tmp_path):
-        workspace = Workspace.build(tmp_path)
-        with pytest.raises(ValueError, match="shell"):
-            run_tool(workspace, "run_command", {"argv": ["bash", "-c", "ls"]})
-
-    def test_rejects_shell_interpreter_sh(self, tmp_path):
-        workspace = Workspace.build(tmp_path)
-        with pytest.raises(ValueError, match="shell"):
-            run_tool(workspace, "run_command", {"argv": ["sh", "-c", "ls"]})
+        # validate_tool should not raise ValueError about "shell interpreter not allowed"
+        validate_tool(workspace, "run_command", {"argv": [interpreter, "-c", "echo hello"]})
 
     def test_requires_approval(self):
         assert TOOL_SPECS["run_command"].requires_approval is True
@@ -520,3 +501,46 @@ class TestClipArtifact:
         assert len(result["args"]["old_text"]) == 500
         assert len(result["args"]["new_text"]) == 500
         assert result["args"]["old_text"].endswith("...")
+
+
+class TestIsShellInterpreter:
+    def test_cmd(self):
+        from mico.tools import is_shell_interpreter
+        assert is_shell_interpreter(["cmd", "/c", "dir"]) is True
+
+    def test_cmd_exe(self):
+        from mico.tools import is_shell_interpreter
+        assert is_shell_interpreter(["cmd.exe", "/c", "dir"]) is True
+
+    def test_powershell(self):
+        from mico.tools import is_shell_interpreter
+        assert is_shell_interpreter(["powershell", "-c", "dir"]) is True
+
+    def test_pwsh(self):
+        from mico.tools import is_shell_interpreter
+        assert is_shell_interpreter(["pwsh", "-c", "dir"]) is True
+
+    def test_bash(self):
+        from mico.tools import is_shell_interpreter
+        assert is_shell_interpreter(["bash", "-c", "ls"]) is True
+
+    def test_sh(self):
+        from mico.tools import is_shell_interpreter
+        assert is_shell_interpreter(["sh", "-c", "ls"]) is True
+
+    def test_python_not_shell(self):
+        from mico.tools import is_shell_interpreter
+        assert is_shell_interpreter(["python", "-c", "print(1)"]) is False
+
+    def test_empty_argv(self):
+        from mico.tools import is_shell_interpreter
+        assert is_shell_interpreter([]) is False
+
+    def test_full_path_bash(self):
+        from mico.tools import is_shell_interpreter
+        assert is_shell_interpreter(["/bin/bash", "-c", "ls"]) is True
+
+    def test_case_insensitive(self):
+        from mico.tools import is_shell_interpreter
+        assert is_shell_interpreter(["CMD", "/c", "dir"]) is True
+        assert is_shell_interpreter(["Bash", "-c", "ls"]) is True

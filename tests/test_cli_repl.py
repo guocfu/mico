@@ -13,7 +13,7 @@ class FakeAgent:
 
 
 def _patch_build_agent(monkeypatch, fake_agent):
-    monkeypatch.setattr("mico.cli.build_agent", lambda args: fake_agent)
+    monkeypatch.setattr("mico.cli.build_agent", lambda args, approval_callback=None: fake_agent)
 
 
 # --- REPL entry ---
@@ -105,3 +105,58 @@ def test_main_with_prompt_one_shot(monkeypatch, capsys):
     assert fake.ask_calls == ["hello"]
     captured = capsys.readouterr()
     assert "echo: hello" in captured.out
+
+
+def test_build_agent_default_approval_is_ask(monkeypatch, tmp_path):
+    from mico.cli import build_agent, build_arg_parser
+    args = build_arg_parser().parse_args(["--cwd", str(tmp_path), "hello"])
+    agent = build_agent(args)
+    assert agent.approval_policy == "ask"
+
+
+def test_build_agent_approval_auto(monkeypatch, tmp_path):
+    from mico.cli import build_agent, build_arg_parser
+    args = build_arg_parser().parse_args(["--cwd", str(tmp_path), "--approval", "auto", "hello"])
+    agent = build_agent(args)
+    assert agent.approval_policy == "auto"
+
+
+def test_build_agent_approval_never(monkeypatch, tmp_path):
+    from mico.cli import build_agent, build_arg_parser
+    args = build_arg_parser().parse_args(["--cwd", str(tmp_path), "--approval", "never", "hello"])
+    agent = build_agent(args)
+    assert agent.approval_policy == "never"
+
+
+def test_cli_approval_callback_approves_yes(monkeypatch):
+    from mico.cli import make_approval_callback
+    callback = make_approval_callback(interactive=True)
+    monkeypatch.setattr("builtins.input", lambda _prompt="": "y")
+    assert callback(["cmd", "/c", "dir"]) is True
+
+
+def test_cli_approval_callback_approves_yes_full(monkeypatch):
+    from mico.cli import make_approval_callback
+    callback = make_approval_callback(interactive=True)
+    monkeypatch.setattr("builtins.input", lambda _prompt="": "yes")
+    assert callback(["cmd", "/c", "dir"]) is True
+
+
+def test_cli_approval_callback_denies_no(monkeypatch):
+    from mico.cli import make_approval_callback
+    callback = make_approval_callback(interactive=True)
+    monkeypatch.setattr("builtins.input", lambda _prompt="": "n")
+    assert callback(["cmd", "/c", "dir"]) is False
+
+
+def test_cli_approval_callback_denies_empty(monkeypatch):
+    from mico.cli import make_approval_callback
+    callback = make_approval_callback(interactive=True)
+    monkeypatch.setattr("builtins.input", lambda _prompt="": "")
+    assert callback(["cmd", "/c", "dir"]) is False
+
+
+def test_cli_approval_callback_non_interactive_denies():
+    from mico.cli import make_approval_callback
+    callback = make_approval_callback(interactive=False)
+    assert callback(["cmd", "/c", "dir"]) is False

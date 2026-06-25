@@ -1,4 +1,17 @@
+import shutil
+import sys
 from dataclasses import dataclass, field
+
+
+_SHELL_NAMES = [
+    "cmd", "cmd.exe", "powershell", "powershell.exe",
+    "pwsh", "pwsh.exe", "bash", "bash.exe", "sh", "sh.exe",
+]
+
+
+def detect_available_shells():
+    """Return list of shell interpreter names found on PATH via shutil.which()."""
+    return [name for name in _SHELL_NAMES if shutil.which(name)]
 
 
 @dataclass(frozen=True)
@@ -21,6 +34,7 @@ class PromptBuilder:
             f"{self._response_contract()}\n\n"
             f"{self._runtime_policy(approval_policy)}\n"
             f"{self._tool_catalog(tool_catalog)}\n\n"
+            f"{self._system_context()}\n"
             f"{self._workspace_context(workspace_root)}\n"
             f"{self._current_request(user_message)}\n"
             f"{self._recent_history(recent)}\n"
@@ -74,6 +88,19 @@ class PromptBuilder:
     @staticmethod
     def _workspace_context(workspace_root):
         return f"Workspace: {workspace_root}"
+
+    @staticmethod
+    def _system_context():
+        platform = sys.platform
+        available = detect_available_shells()
+        shells_str = ", ".join(available) if available else "(none detected)"
+        if platform == "win32":
+            guidance = "On Windows, prefer cmd.exe or powershell/pwsh. Avoid bash/sh unless listed as available."
+        elif platform == "darwin":
+            guidance = "On macOS, use bash or sh. cmd/powershell are not available."
+        else:
+            guidance = "On Linux, use bash or sh. cmd/powershell are not available."
+        return f"OS: {platform}\nAvailable shells: {shells_str}\nGuidance: {guidance}"
 
     @staticmethod
     def _current_request(user_message):

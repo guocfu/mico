@@ -1,5 +1,6 @@
 import argparse
 import os
+import sys
 from pathlib import Path
 
 from .dotenv import load_dotenv
@@ -17,9 +18,9 @@ def build_arg_parser():
     parser.add_argument("--max-steps", type=int, default=4, help="Maximum model/tool iterations.")
     parser.add_argument(
         "--approval",
-        choices=("auto", "never"),
-        default="auto",
-        help="Tool approval policy; approval=never blocks tools that require approval, such as patch_file.",
+        choices=("auto", "ask", "never"),
+        default="ask",
+        help="Tool approval policy; ask: confirm shell commands; auto: allow all; never: block write tools.",
     )
     parser.add_argument(
         "--provider",
@@ -54,6 +55,26 @@ def build_arg_parser():
     return parser
 
 
+def make_approval_callback(interactive, cwd=None):
+    """Create an approval callback for shell command authorization.
+
+    Returns a callable(argv) -> bool.
+    In interactive mode, prompts user with cwd/argv and requires y/yes.
+    In non-interactive mode, always denies shell commands.
+    """
+    def _callback(argv):
+        if not interactive:
+            return False
+        prompt = f"Allow shell command? cwd={cwd} argv={argv}\n  Confirm [y/yes]: "
+        try:
+            answer = input(prompt).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return False
+        return answer in ("y", "yes")
+
+    return _callback
+
+
 def _resolve_config(args):
     """Resolve final configuration from CLI args > system env > .env.
 
@@ -86,7 +107,7 @@ def _resolve_config(args):
     return provider, base_url, model, api_key_env
 
 
-def build_agent(args):
+def build_agent(args, approval_callback=None):
     provider, base_url, model, api_key_env = _resolve_config(args)
     workspace = Workspace.build(args.cwd)
     if provider == "fake":
@@ -113,6 +134,7 @@ def build_agent(args):
         run_store=RunStore(workspace.root / ".mico" / "runs"),
         approval_policy=args.approval,
         max_steps=args.max_steps,
+        approval_callback=approval_callback,
     )
 
 
@@ -138,12 +160,16 @@ def main(argv=None):
     load_dotenv(Path.cwd())
     args = build_arg_parser().parse_args(argv)
     prompt = " ".join(args.prompt).strip()
+
+    interactive = sys.stdin.isatty()
+    approval_cb = make_approval_callback(interactive, cwd=args.cwd) if args.approval == "ask" else None
+
     if not prompt:
         if args.verify_cmd:
             raise SystemExit("--verify-cmd is only supported in one-shot mode")
-        agent = build_agent(args)
+        agent = build_agent(args, approval_callback=approval_cb)
         return run_repl(agent)
-    agent = build_agent(args)
+    agent = build_agent(args, approval_callback=approval_cb)
     final_answer = agent.ask(prompt)
     print(final_answer)
 

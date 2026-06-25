@@ -169,3 +169,59 @@ def test_prompt_metadata_approval_never_restricts_patch():
     assert "patch_file" in bundle.text
     assert "not allowed under approval=never" in bundle.text
     assert bundle.metadata["restricted_tool_count"] == 1
+
+
+def test_prompt_contains_os_info():
+    import sys
+    builder = PromptBuilder()
+    bundle = builder.build(
+        tool_catalog=_sample_catalog(),
+        approval_policy="auto",
+        workspace_root="/tmp/ws",
+        user_message="hello",
+        history=[],
+    )
+    assert "OS:" in bundle.text
+    assert sys.platform in bundle.text
+
+
+def test_prompt_contains_available_shells():
+    from mico.prompt import detect_available_shells
+    builder = PromptBuilder()
+    bundle = builder.build(
+        tool_catalog=_sample_catalog(),
+        approval_policy="auto",
+        workspace_root="/tmp/ws",
+        user_message="hello",
+        history=[],
+    )
+    assert "Available shells:" in bundle.text
+    available = detect_available_shells()
+    if available:
+        for shell in available:
+            assert shell in bundle.text
+    else:
+        assert "(none detected)" in bundle.text
+
+
+def test_prompt_contains_shell_guidance():
+    builder = PromptBuilder()
+    bundle = builder.build(
+        tool_catalog=_sample_catalog(),
+        approval_policy="auto",
+        workspace_root="/tmp/ws",
+        user_message="hello",
+        history=[],
+    )
+    assert "Guidance:" in bundle.text
+    assert "OS" in bundle.text
+
+
+def test_detect_available_shells_returns_list():
+    from mico.prompt import detect_available_shells
+    result = detect_available_shells()
+    assert isinstance(result, list)
+    # Every entry is a string from the known set
+    from mico.prompt import _SHELL_NAMES
+    for name in result:
+        assert name in _SHELL_NAMES

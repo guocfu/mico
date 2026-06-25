@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from mico.providers import FakeModelClient
 from mico.runtime import Mico
 from mico.state import RunStore
@@ -722,7 +724,7 @@ def test_run_store_write_json_is_parseable(tmp_path):
     assert not path.with_suffix(".json.tmp").exists()
 
 
-def test_approval_denied_then_same_call_still_denied(tmp_path):
+def test_approval_denied_then_same_call_is_repeated(tmp_path):
     (tmp_path / "code.py").write_text("old\n", encoding="utf-8")
     workspace = Workspace.build(tmp_path)
     executor = ToolExecutor(workspace, approval_policy="never")
@@ -733,8 +735,8 @@ def test_approval_denied_then_same_call_still_denied(tmp_path):
 
     assert first.metadata["error_kind"] == "approval_denied"
     assert first.metadata["blocked_by_approval"] is True
-    assert second.metadata["error_kind"] == "approval_denied"
-    assert second.metadata["blocked_by_approval"] is True
+    assert second.metadata["error_kind"] == "repeated_call"
+    assert second.metadata["repeated_call"] is True
 
 
 def test_validation_error_then_valid_call_not_repeated(tmp_path):
@@ -1463,3 +1465,244 @@ def test_report_files_written_deduplicates_multiple_writes(tmp_path):
     report = json.loads((run_dirs[0] / "report.json").read_text(encoding="utf-8"))
     assert report["files_written"] == ["out.txt"]
     assert report["changed_files"] == ["out.txt"]
+
+
+# --- approval=ask tests ---
+
+def test_approval_ask_patch_file_auto_executes(tmp_path):
+    (tmp_path / "code.py").write_text("old\n", encoding="utf-8")
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"patch_file","args":{"path":"code.py","old_text":"old","new_text":"new"}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+        approval_policy="ask",
+    )
+
+    answer = agent.ask("fix code")
+
+    assert answer == "done"
+    assert (tmp_path / "code.py").read_text(encoding="utf-8") == "new\n"
+    assert agent.history[1]["metadata"]["ok"] is True
+
+
+def test_approval_ask_write_file_auto_executes(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"write_file","args":{"path":"out.txt","content":"hello"}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+        approval_policy="ask",
+    )
+
+    answer = agent.ask("create file")
+
+    assert answer == "done"
+    assert (tmp_path / "out.txt").read_text(encoding="utf-8") == "hello"
+    assert agent.history[1]["metadata"]["ok"] is True
+
+
+def test_approval_ask_normal_run_command_auto_executes(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"run_command","args":{"argv":["python","-c","print(42)"]}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+        approval_policy="ask",
+    )
+
+    answer = agent.ask("run python")
+
+    assert answer == "done"
+    assert agent.history[1]["metadata"]["ok"] is True
+    assert "42" in agent.history[1]["content"]
+
+
+def test_approval_ask_shell_command_approved_by_callback(tmp_path):
+    from mico.prompt import detect_available_shells
+
+    available = detect_available_shells()
+    if not available:
+        pytest.skip("no shell interpreter available on this platform")
+
+    shell = available[0]
+    if shell in ("cmd", "cmd.exe"):
+        argv = [shell, "/c", "echo hello"]
+    else:
+        argv = [shell, "-c", "echo hello"]
+
+    workspace = Workspace.build(tmp_path)
+    always_approve = lambda argv: True
+    agent = Mico(
+        model_client=FakeModelClient([
+            f'<tool>{{"name":"run_command","args":{{"argv":{json.dumps(argv)}}}}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+        approval_policy="ask",
+        approval_callback=always_approve,
+    )
+
+    answer = agent.ask("run shell command")
+
+    assert answer == "done"
+    assert agent.history[1]["metadata"]["ok"] is True
+    assert agent.history[1]["metadata"]["error_kind"] == "ok"
+    assert "hello" in agent.history[1]["content"]
+
+
+def test_approval_ask_shell_command_denied_by_callback(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    always_deny = lambda argv: False
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"run_command","args":{"argv":["cmd","/c","echo hello"]}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+        approval_policy="ask",
+        approval_callback=always_deny,
+    )
+
+    answer = agent.ask("run cmd")
+
+    assert answer == "done"
+    assert agent.history[1]["metadata"]["ok"] is False
+    assert agent.history[1]["metadata"]["error_kind"] == "approval_denied"
+
+
+def test_approval_ask_shell_command_denied_not_in_commands_run(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    always_deny = lambda argv: False
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"run_command","args":{"argv":["cmd","/c","echo hello"]}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+        approval_policy="ask",
+        approval_callback=always_deny,
+    )
+
+    agent.ask("run cmd")
+
+    run_dirs = list((tmp_path / ".mico" / "runs").iterdir())
+    report = json.loads((run_dirs[0] / "report.json").read_text(encoding="utf-8"))
+    assert report["commands_run"] == []
+    assert report["tool_call_summary"]["approval_denied"] == 1
+
+
+def test_approval_ask_shell_command_approved_in_commands_run(tmp_path):
+    """Shell interpreter command approved via callback actually executes and appears in report."""
+    from mico.prompt import detect_available_shells
+
+    available = detect_available_shells()
+    if not available:
+        pytest.skip("no shell interpreter available on this platform")
+
+    shell = available[0]
+    if shell in ("cmd", "cmd.exe"):
+        argv = [shell, "/c", "echo hello"]
+    else:
+        argv = [shell, "-c", "echo hello"]
+
+    workspace = Workspace.build(tmp_path)
+    always_approve = lambda argv: True
+    agent = Mico(
+        model_client=FakeModelClient([
+            f'<tool>{{"name":"run_command","args":{{"argv":{json.dumps(argv)}}}}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+        approval_policy="ask",
+        approval_callback=always_approve,
+    )
+
+    agent.ask("run shell command")
+
+    assert agent.history[1]["metadata"]["ok"] is True
+    assert agent.history[1]["metadata"]["error_kind"] == "ok"
+
+    run_dirs = list((tmp_path / ".mico" / "runs").iterdir())
+    report = json.loads((run_dirs[0] / "report.json").read_text(encoding="utf-8"))
+    assert len(report["commands_run"]) == 1
+    cmd = report["commands_run"][0]
+    assert cmd["argv"][0] == shell
+    assert "hello" in cmd["stdout_tail"]
+    assert cmd["error_kind"] == "ok"
+
+
+def test_approval_ask_no_callback_shell_command_denied(tmp_path):
+    """Without a callback, shell commands under approval=ask should be denied."""
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"run_command","args":{"argv":["cmd","/c","dir"]}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+        approval_policy="ask",
+    )
+
+    answer = agent.ask("run cmd")
+
+    assert answer == "done"
+    assert agent.history[1]["metadata"]["ok"] is False
+    assert agent.history[1]["metadata"]["error_kind"] == "approval_denied"
+
+
+def test_approval_ask_readonly_tools_work(tmp_path):
+    (tmp_path / "notes.txt").write_text("hello\n", encoding="utf-8")
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"read_file","args":{"path":"notes.txt","start":1,"end":80}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+        approval_policy="ask",
+    )
+
+    answer = agent.ask("read file")
+
+    assert answer == "done"
+    assert "hello" in agent.history[1]["content"]
+    assert agent.history[1]["metadata"]["ok"] is True
+
+
+def test_approval_ask_denied_shell_command_repeated(tmp_path):
+    """Denied shell commands are caught by repeated_call on retry."""
+    workspace = Workspace.build(tmp_path)
+    always_deny = lambda argv: False
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"run_command","args":{"argv":["cmd","/c","dir"]}}</tool>',
+            '<tool>{"name":"run_command","args":{"argv":["cmd","/c","dir"]}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+        approval_policy="ask",
+        approval_callback=always_deny,
+    )
+
+    answer = agent.ask("run cmd twice")
+
+    assert answer == "done"
+    assert agent.history[1]["metadata"]["error_kind"] == "approval_denied"
+    assert agent.history[2]["metadata"]["error_kind"] == "repeated_call"
