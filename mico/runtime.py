@@ -6,7 +6,7 @@ from .tool_executor import ToolExecutor
 
 
 class Mico:
-    def __init__(self, model_client, workspace, run_store, approval_policy="auto", max_steps=4, approval_callback=None):
+    def __init__(self, model_client, workspace, run_store, approval_policy="auto", max_steps=4, approval_callback=None, event_callback=None):
         self.model_client = model_client
         self.workspace = workspace
         self.run_store = run_store
@@ -19,6 +19,15 @@ class Mico:
         self._model_output_parser = ModelOutputParser()
         self._last_parser_error_kind = None
         self._last_task_state = None
+        self.event_callback = event_callback
+
+    def emit_ui_event(self, event_type, payload=None):
+        if self.event_callback is None:
+            return
+        try:
+            self.event_callback(event_type, redact_artifact(payload))
+        except Exception:
+            pass
 
     def ask(self, user_message):
         self.tool_executor.reset_run_state()

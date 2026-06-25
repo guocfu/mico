@@ -8,7 +8,7 @@ from .providers import FakeModelClient, OpenAICompatibleModelClient
 from .runtime import Mico
 from .state import RunStore
 from .verification import run_verification, write_verification_json
-from .workspace import Workspace
+from .workspace import Workspace, clip, clip_artifact
 
 
 def build_arg_parser():
@@ -107,7 +107,7 @@ def _resolve_config(args):
     return provider, base_url, model, api_key_env
 
 
-def build_agent(args, approval_callback=None):
+def build_agent(args, approval_callback=None, event_callback=None):
     provider, base_url, model, api_key_env = _resolve_config(args)
     workspace = Workspace.build(args.cwd)
     if provider == "fake":
@@ -135,7 +135,47 @@ def build_agent(args, approval_callback=None):
         approval_policy=args.approval,
         max_steps=args.max_steps,
         approval_callback=approval_callback,
+        event_callback=event_callback,
     )
+
+
+def build_console_renderer():
+    """Return an event_callback that prints concise progress lines to stdout."""
+
+    def _render(etype, payload):
+        p = payload or {}
+        if etype == "thinking":
+            print("mico: thinking...")
+        elif etype == "tool_started":
+            name = p.get("name", "?")
+            args = p.get("args", {})
+            if name in ("write_file", "patch_file"):
+                path = args.get("path", "?")
+                print(f"mico: tool {name} path={path}")
+            elif name == "run_command":
+                argv = args.get("argv", [])
+                print(f"mico: tool {name} argv={clip_artifact(argv, 200)}")
+            else:
+                print(f"mico: tool {name} {clip(str(args), 100)}")
+        elif etype == "tool_finished":
+            name = p.get("name", "?")
+            ok = p.get("ok", False)
+            error_kind = p.get("error_kind", "unknown")
+            if ok:
+                extra = ""
+                if name == "run_command":
+                    extra = f" exit={p.get('exit_code')} duration={p.get('duration_ms')}ms"
+                print(f"mico: ok {name}{extra}")
+            else:
+                extra = ""
+                if error_kind == "command_failed":
+                    extra = f" exit={p.get('exit_code')}"
+                print(f"mico: error {name} {error_kind}{extra}")
+        elif etype == "retry":
+            error_kind = p.get("error_kind", "retry")
+            print(f"mico: retry {error_kind}")
+
+    return _render
 
 
 def run_repl(agent):
@@ -167,7 +207,8 @@ def main(argv=None):
     if not prompt:
         if args.verify_cmd:
             raise SystemExit("--verify-cmd is only supported in one-shot mode")
-        agent = build_agent(args, approval_callback=approval_cb)
+        renderer = build_console_renderer() if interactive else None
+        agent = build_agent(args, approval_callback=approval_cb, event_callback=renderer)
         return run_repl(agent)
     agent = build_agent(args, approval_callback=approval_cb)
     final_answer = agent.ask(prompt)

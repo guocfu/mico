@@ -5,6 +5,16 @@ from .tools import TOOL_SPECS
 from .workspace import clip, clip_artifact
 
 
+def _summarize_tool_args(name, args):
+    """Return a UI-safe short summary of tool arguments."""
+    if name in ("write_file", "patch_file"):
+        return {"path": args.get("path", "?")}
+    if name == "run_command":
+        argv = args.get("argv", [])
+        return {"argv": clip_artifact(argv, 200)}
+    return clip_artifact(args, 120)
+
+
 class AgentLoop:
     def __init__(self, agent):
         self.agent = agent
@@ -36,6 +46,7 @@ class AgentLoop:
                 "attempts": task_state.attempts,
                 "prompt_metadata": bundle.metadata,
             })
+            agent.emit_ui_event("thinking")
             try:
                 raw = agent.model_client.complete(prompt)
             except Exception as exc:
@@ -53,6 +64,7 @@ class AgentLoop:
                         "run_duration_ms": int((time.monotonic() - started_at) * 1000),
                     },
                 )
+                agent.emit_ui_event("run_finished", {"final_summary": clip(final, 120)})
                 agent.run_store.write_report(task_state, agent.build_report(task_state))
                 agent._last_task_state = task_state
                 return final
@@ -69,7 +81,13 @@ class AgentLoop:
                 if task_state.tool_steps >= agent.max_steps:
                     step_limit_reached = True
                     break
+                agent.emit_ui_event("tool_started", {
+                    "name": name,
+                    "args": _summarize_tool_args(name, args),
+                })
+                t0 = time.monotonic()
                 result = agent.execute_tool(name, args)
+                duration_ms = int((time.monotonic() - t0) * 1000)
                 task_state.record_tool(name)
                 spec = TOOL_SPECS.get(name)
                 max_chars = spec.max_result_chars if spec else 4000
@@ -88,9 +106,23 @@ class AgentLoop:
                     "tool_executed",
                     {"name": name, "args": clip_artifact(args, 500), "result": clip(result.content, 500), **result.metadata},
                 )
+                tool_finished_payload = {
+                    "name": name,
+                    "ok": result.metadata.get("ok", False),
+                    "error_kind": result.metadata.get("error_kind", "unknown"),
+                    "duration_ms": duration_ms,
+                }
+                meta = result.metadata
+                if "exit_code" in meta:
+                    tool_finished_payload["exit_code"] = meta["exit_code"]
+                if "timed_out" in meta:
+                    tool_finished_payload["timed_out"] = meta["timed_out"]
+                agent.emit_ui_event("tool_finished", tool_finished_payload)
                 continue
 
             if kind == "retry":
+                error_kind = parsed.error_kind or "unknown_block"
+                agent.emit_ui_event("retry", {"error_kind": error_kind, "message": clip(str(payload), 120)})
                 agent.record({"role": "assistant", "content": payload, "created_at": now()})
                 continue
 
@@ -108,6 +140,7 @@ class AgentLoop:
                     "run_duration_ms": int((time.monotonic() - started_at) * 1000),
                 },
             )
+            agent.emit_ui_event("run_finished", {"final_summary": clip(final, 120)})
             agent.run_store.write_report(task_state, agent.build_report(task_state))
             agent._last_task_state = task_state
             return final
@@ -131,6 +164,7 @@ class AgentLoop:
                 "step_limit_reached": step_limit_reached,
             },
         )
+        agent.emit_ui_event("run_finished", {"final_summary": clip(final, 120)})
         agent.run_store.write_report(task_state, agent.build_report(task_state))
         agent._last_task_state = task_state
         return final

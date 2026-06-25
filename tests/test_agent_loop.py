@@ -1706,3 +1706,248 @@ def test_approval_ask_denied_shell_command_repeated(tmp_path):
     assert answer == "done"
     assert agent.history[1]["metadata"]["error_kind"] == "approval_denied"
     assert agent.history[2]["metadata"]["error_kind"] == "repeated_call"
+
+
+# --- UI event callback tests ---
+
+
+def test_event_callback_receives_tool_started_and_finished(tmp_path):
+    (tmp_path / "notes.txt").write_text("hello\n", encoding="utf-8")
+    workspace = Workspace.build(tmp_path)
+    events = []
+
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"read_file","args":{"path":"notes.txt","start":1,"end":80}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+        event_callback=lambda etype, payload: events.append((etype, dict(payload or {}))),
+    )
+
+    agent.ask("read file")
+
+    tool_started = [e for e in events if e[0] == "tool_started"]
+    tool_finished = [e for e in events if e[0] == "tool_finished"]
+    assert len(tool_started) == 1
+    assert len(tool_finished) == 1
+    assert tool_started[0][1]["name"] == "read_file"
+    assert "path" in tool_started[0][1].get("args", {})
+    assert tool_finished[0][1]["name"] == "read_file"
+    assert tool_finished[0][1]["ok"] is True
+
+
+def test_event_callback_receives_retry_on_malformed_output(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    events = []
+
+    agent = Mico(
+        model_client=FakeModelClient(["not xml", "<final>done</final>"]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+        event_callback=lambda etype, payload: events.append((etype, dict(payload or {}))),
+    )
+
+    agent.ask("hello")
+
+    retry_events = [e for e in events if e[0] == "retry"]
+    assert len(retry_events) == 1
+    assert "error_kind" in retry_events[0][1]
+
+
+def test_event_callback_receives_run_finished(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    events = []
+
+    agent = Mico(
+        model_client=FakeModelClient(["<final>all done</final>"]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+        event_callback=lambda etype, payload: events.append((etype, dict(payload or {}))),
+    )
+
+    agent.ask("hello")
+
+    final_events = [e for e in events if e[0] == "run_finished"]
+    assert len(final_events) == 1
+    assert "final_summary" in final_events[0][1]
+
+
+def test_event_callback_receives_thinking(tmp_path):
+    (tmp_path / "notes.txt").write_text("hello\n", encoding="utf-8")
+    workspace = Workspace.build(tmp_path)
+    events = []
+
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"read_file","args":{"path":"notes.txt","start":1,"end":80}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+        event_callback=lambda etype, payload: events.append((etype, dict(payload or {}))),
+    )
+
+    agent.ask("read file")
+
+    thinking_events = [e for e in events if e[0] == "thinking"]
+    assert len(thinking_events) >= 1
+
+
+def test_event_callback_exception_does_not_break_agent(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    called = []
+
+    def bad_callback(etype, payload):
+        called.append(etype)
+        if etype == "thinking":
+            raise RuntimeError("boom")
+
+    agent = Mico(
+        model_client=FakeModelClient(["<final>ok</final>"]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+        event_callback=bad_callback,
+    )
+
+    answer = agent.ask("hello")
+    assert answer == "ok"
+    assert "thinking" in called
+    assert "run_finished" in called
+
+
+def test_event_callback_not_called_when_none(tmp_path):
+    workspace = Workspace.build(tmp_path)
+
+    agent = Mico(
+        model_client=FakeModelClient(["<final>ok</final>"]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    answer = agent.ask("hello")
+    assert answer == "ok"
+
+
+def test_event_callback_tool_finished_includes_error_info(tmp_path):
+    (tmp_path / "code.py").write_text("old\n", encoding="utf-8")
+    workspace = Workspace.build(tmp_path)
+    events = []
+
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"patch_file","args":{"path":"code.py","old_text":"notfound","new_text":"x"}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+        event_callback=lambda etype, payload: events.append((etype, dict(payload or {}))),
+        approval_policy="auto",
+    )
+
+    agent.ask("fix code")
+
+    finished = [e for e in events if e[0] == "tool_finished"]
+    assert len(finished) == 1
+    assert finished[0][1]["name"] == "patch_file"
+    assert finished[0][1]["ok"] is False
+    assert "error_kind" in finished[0][1]
+
+
+def test_event_callback_tool_args_not_contain_full_content(tmp_path):
+    (tmp_path / "code.py").write_text("old content\n", encoding="utf-8")
+    workspace = Workspace.build(tmp_path)
+    events = []
+
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"patch_file","args":{"path":"code.py","old_text":"old content","new_text":"new content"}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+        event_callback=lambda etype, payload: events.append((etype, dict(payload or {}))),
+    )
+
+    agent.ask("fix code")
+
+    started = [e for e in events if e[0] == "tool_started"]
+    assert len(started) == 1
+    args_str = json.dumps(started[0][1].get("args", {}))
+    assert "old content" not in args_str
+    assert "new content" not in args_str
+
+
+def test_event_callback_tool_finished_run_command_has_exit_and_duration(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    events = []
+
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"run_command","args":{"argv":["python","-c","print(42)"]}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+        event_callback=lambda etype, payload: events.append((etype, dict(payload or {}))),
+    )
+
+    agent.ask("run python")
+
+    finished = [e for e in events if e[0] == "tool_finished"]
+    assert len(finished) == 1
+    assert finished[0][1]["name"] == "run_command"
+    assert "exit_code" in finished[0][1]
+    assert "duration_ms" in finished[0][1]
+    assert finished[0][1]["exit_code"] == 0
+    assert finished[0][1]["timed_out"] is False
+
+
+def test_event_callback_redacts_sensitive_values(tmp_path, monkeypatch):
+    monkeypatch.setenv("MY_SECRET", "secret-value-xyz")
+    (tmp_path / "notes.txt").write_text("hello\n", encoding="utf-8")
+    workspace = Workspace.build(tmp_path)
+    events = []
+
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"search","args":{"pattern":"secret-value-xyz","path":"."}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+        event_callback=lambda etype, payload: events.append((etype, dict(payload or {}))),
+    )
+
+    agent.ask("search for secret")
+
+    started = [e for e in events if e[0] == "tool_started"]
+    assert len(started) == 1
+    payload_text = json.dumps(started[0][1])
+    assert "secret-value-xyz" not in payload_text
+    assert "[REDACTED]" in payload_text
+
+
+def test_event_callback_redacts_sensitive_values_in_run_command_argv(tmp_path, monkeypatch):
+    monkeypatch.setenv("MY_TOKEN", "token-abc-123")
+    workspace = Workspace.build(tmp_path)
+    events = []
+
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"run_command","args":{"argv":["python","-c","print(\\"token-abc-123\\")"]}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+        event_callback=lambda etype, payload: events.append((etype, dict(payload or {}))),
+    )
+
+    agent.ask("run with token")
+
+    started = [e for e in events if e[0] == "tool_started"]
+    assert len(started) == 1
+    payload_text = json.dumps(started[0][1])
+    assert "token-abc-123" not in payload_text
+    assert "[REDACTED]" in payload_text

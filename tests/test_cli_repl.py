@@ -13,7 +13,7 @@ class FakeAgent:
 
 
 def _patch_build_agent(monkeypatch, fake_agent):
-    monkeypatch.setattr("mico.cli.build_agent", lambda args, approval_callback=None: fake_agent)
+    monkeypatch.setattr("mico.cli.build_agent", lambda args, approval_callback=None, event_callback=None: fake_agent)
 
 
 # --- REPL entry ---
@@ -160,3 +160,74 @@ def test_cli_approval_callback_non_interactive_denies():
     from mico.cli import make_approval_callback
     callback = make_approval_callback(interactive=False)
     assert callback(["cmd", "/c", "dir"]) is False
+
+
+# --- REPL progress display ---
+
+
+class ProgressAgent:
+    """Fake agent that records event_callback and fires events during ask()."""
+
+    def __init__(self):
+        self.ask_calls = []
+        self.event_callback = None
+
+    def ask(self, message):
+        self.ask_calls.append(message)
+        cb = self.event_callback
+        if cb:
+            cb("thinking", {})
+            cb("tool_started", {"name": "read_file", "args": {"path": "README.md"}})
+            cb("tool_finished", {"name": "read_file", "ok": True, "error_kind": "ok", "duration_ms": 5})
+            cb("run_finished", {"final_summary": "done"})
+        return f"echo: {message}"
+
+
+def _patch_build_agent_with_progress(monkeypatch, agent):
+    def _build(args, approval_callback=None, event_callback=None):
+        agent.event_callback = event_callback
+        return agent
+    monkeypatch.setattr("mico.cli.build_agent", _build)
+
+
+def test_repl_output_contains_progress_lines(monkeypatch, capsys):
+    """REPL mode prints progress lines before the final answer."""
+    agent = ProgressAgent()
+    _patch_build_agent_with_progress(monkeypatch, agent)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", _make_input_side_effect(["hello", EOFError()]))
+
+    main([])
+
+    captured = capsys.readouterr()
+    assert "thinking" in captured.out
+    assert "read_file" in captured.out
+    assert "echo: hello" in captured.out
+
+
+def test_repl_output_thinking_and_tool_and_ok(monkeypatch, capsys):
+    """REPL progress output includes thinking indicator, tool name, and ok status."""
+    agent = ProgressAgent()
+    _patch_build_agent_with_progress(monkeypatch, agent)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", _make_input_side_effect(["hello", EOFError()]))
+
+    main([])
+
+    captured = capsys.readouterr()
+    assert "mico:" in captured.out
+    assert "tool" in captured.out
+
+
+def test_one_shot_does_not_print_progress(monkeypatch, capsys):
+    """One-shot mode prints only the final answer, no progress lines."""
+    agent = ProgressAgent()
+    _patch_build_agent_with_progress(monkeypatch, agent)
+
+    result = main(["hello"])
+
+    assert result == 0
+    captured = capsys.readouterr()
+    assert "thinking" not in captured.out
+    assert "read_file" not in captured.out
+    assert "echo: hello" in captured.out
