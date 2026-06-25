@@ -2,7 +2,7 @@
 
 > 日期：2026-06-24
 > 状态：后续主执行路线
-> 进度：P0、P1、P2 核心闭环已完成；下一步进入 P6 文档/演示阶段
+> 进度：P0、P1、P2 核心闭环已完成；下一步进入 P3 面试记忆系统
 > 说明：`analysis/mico-improvement-framework.md` 保留为历史技术分析；`analysis/claude code.md` 和 Opus 4.8 架构评审作为本次重定位参考。后续功能迭代、Claude Code 实现任务和 Codex 审查，优先以本文为准。
 
 ## 当前进度
@@ -10,7 +10,7 @@
 - **P0**：已完成。文档已同步，协作规则已建立。
 - **P1**：已完成。`write_file`、`run_command`、provider 自动选择、prompt 更新均已实现并通过测试。
 - **P2 核心闭环**：已打通。mico 能在真实模型下完成创建/修改/测试/修复的完整任务链路。
-- **P6**：下一步。文档、演示录屏和项目展示。
+- **P3**：下一步。面向面试需要，实现可落地的本地记忆系统和任务内上下文治理。
 
 ## 1. 项目定位
 
@@ -45,9 +45,9 @@
 2. 能运行测试、lint 或脚本。
 3. 能看懂失败输出并继续修复。
 4. 能留下可审计的运行记录。
-5. 能通过 demo 证明真实可用。
+5. 能在面试准备中持续记住稳定事实、项目经历、JD 和反馈。
 
-上下文治理、结构化记忆、checkpoint/resume 和行区间编辑等能力暂缓，只有当 P1-P2 跑真实任务或录制 demo 时暴露出明确痛点，再进入 Backlog 实现。
+当前主线进入面试记忆系统。上下文治理、文件摘要和结构化记忆不再作为展示包装之后的 Backlog，而是 P3 的核心能力；checkpoint/resume 和行区间编辑仍暂缓。
 
 ### 2.2 工具能力要受控，不要因安全焦虑取消能力
 
@@ -66,9 +66,9 @@
 - `MICO_BASE_URL` 和 `MICO_MODEL` 应有合理默认值。
 - `--provider fake` 必须保留，用于离线测试、deterministic benchmark 和 CI。
 
-### 2.4 文档和演示比复杂架构更重要
+### 2.4 面试记忆系统优先于展示包装
 
-P1-P2 完成后，应优先做 P6：README、demo guide、录屏和 safety model。一个能展示 mico 完成真实任务的 2 分钟录屏，比提前实现高级编辑、memory 或 checkpoint 更有价值。
+P1-P2 已证明 mico 具备最小 coding agent 闭环。当前更有价值的是把 memory 做成真实可用的面试准备能力：能记住用户背景、简历卖点、项目素材、目标 JD 和面试反馈，并在后续任务中自动带入相关上下文。
 
 ## 3. 核心架构
 
@@ -298,46 +298,43 @@ P1 只更新静态前缀和工具说明，不做复杂 prompt 优化。
 - 运行工件包含 `trace.jsonl`、`state.json`、`report.json`，可复盘。
 - 核心闭环（任务 -> 读代码 -> 写文件 -> 运行命令 -> 修复失败 -> 生成报告）已打通。
 
-### P6：文档、演示和项目展示
+### P3：面试记忆系统
 
-P1-P2 后优先做 P6，而不是继续做复杂编辑、上下文或恢复系统。
+目标：
+
+- mico 能服务真实面试准备，而不是只做一次性 coding demo。
+- 跨 run 记住用户背景、简历、项目经历、目标岗位和面试反馈。
+- 单次 run 内压缩历史、摘要文件、控制 prompt 预算，避免长任务上下文失控。
 
 产物：
 
-- README：安装、配置、真实使用示例。
-- docs/demo-guide.md：3 个可复制场景。
-- docs/safety-model.md：工具权限、workspace 沙箱、命令执行边界。
-- docs/resume.md：从真实能力自然提炼简历描述。
-- 2 分钟录屏或 recorded session：
-  - 场景 1：`python -m mico "在当前目录创建 fibonacci 函数和 pytest 测试，运行 pytest 直到通过"`。
-  - 场景 2：`python -m mico "修复 examples/buggy-math/add.py 中的加法错误，运行 python verify.py"`。
-  - 场景 3：`python -m mico "给 src/utils.py 添加 reverse_string 函数，创建测试，运行 pytest"`。
-  - 每个场景展示 `.mico/runs/<run_id>/report.json` 中的 changed files、files written、commands run、exit code 和 verification status。
+- `.mico/memory/` 本地 Markdown 记忆目录。
+- 固定 topic：`profile/resume/projects/targets/feedback/preferences`。
+- `remember` 工具，用于显式写入长期面试记忆。
+- `WorkingMemory`：任务摘要、最近文件、文件摘要、freshness。
+- `ContextManager`：section 预算、相关记忆注入、history 压缩、prompt metadata。
+- 对应测试：memory store、中文召回、freshness、history 压缩、隐私字段不进 trace/report。
 
 验收：
 
-- 新用户按 README 可以跑 fake demo。
-- 有 API key 时可以跑真实 coding demo。
-- demo 能证明 mico 创建、修改、运行测试和修复失败。
+- 用户可以要求 mico 记住目标岗位或项目经历。
+- 下一次任务中，mico 能自动注入相关记忆。
+- 用户当前请求在任何预算压力下都完整保留。
+- 记忆正文不写入 trace/report。
+- `python -m pytest` 通过。
 
-## 5. Backlog：只有真实痛点出现后再做
+## 5. Backlog
 
-以下能力不是当前主线：
+以下能力不是 P3 主线：
 
 - 编辑能力增强：`replace_range(path, start, end, content)` 或等价行区间替换工具。
-- context budget。
-- 文件摘要。
-- 任务内 structured memory。
 - checkpoint/resume。
 - workspace fingerprint。
 - drift detection。
-
-启动条件：
-
-- P1-P2 已能完成小型真实任务，且 P6 demo 录制已暴露出明确问题。
-- 真实 demo 中频繁遇到 `patch_file` 精确匹配失败，并且 `write_file` 小文件整体重写不适合解决。
-- 真实使用中反复遇到 prompt 过长、重复读文件或长任务中断问题。
-- 能用一个具体 demo 证明这些能力确实解决问题。
+- embedding/vector DB。
+- 后台自动记忆抽取 agent。
+- 远程 memory store。
+- Claude Code 式四层 compact。
 
 每次启动前先问：
 
@@ -350,10 +347,10 @@ pico 是否需要这个能力？如果不需要，mico 当前为什么需要？
 P0、P1、P2 核心闭环已完成。当前应进入：
 
 ```text
-P6：文档、演示和项目展示
+P3：面试记忆系统
 ```
 
-P6 是项目能否写进简历的关键。一个能展示 mico 完成真实任务的 2 分钟录屏，比继续实现高级编辑或上下文治理更有价值。
+P3 的设计入口是 `analysis/mico-memory-context-design.md`。实现应先做可落地的长期面试记忆最小闭环，再做任务内 WorkingMemory 和 ContextManager。
 
 ## 7. Claude Code 协作要求
 
