@@ -3,6 +3,7 @@ import json
 import pytest
 
 from mico.providers import FakeModelClient
+from mico.session_store import SessionStore
 from mico.runtime import Mico
 from mico.state import RunStore
 from mico.tool_executor import ToolExecutor
@@ -2162,3 +2163,61 @@ def test_event_callback_redacts_sensitive_values_in_run_command_argv(tmp_path, m
     payload_text = json.dumps(started[0][1])
     assert "token-abc-123" not in payload_text
     assert "[REDACTED]" in payload_text
+
+
+# --- session memory integration tests ---
+
+
+def test_session_memory_saved_after_read_file(tmp_path):
+    (tmp_path / "notes.txt").write_text("hello mico\nbye\n", encoding="utf-8")
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"read_file","args":{"path":"notes.txt","start":1,"end":80}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    agent.ask("read file")
+
+    session_path = tmp_path / ".mico" / "sessions" / "default.json"
+    assert session_path.exists()
+    data = json.loads(session_path.read_text(encoding="utf-8"))
+    assert data["session_id"] == "default"
+    mem = data["memory"]
+    assert mem["task_summary"] == "read file"
+    assert "notes.txt" in mem["recent_files"]
+    assert "notes.txt" in mem["file_summaries"]
+    assert len(mem["episodic_notes"]) > 0
+
+
+def test_session_memory_loaded_by_new_mico_instance(tmp_path):
+    (tmp_path / "code.py").write_text("hello\n", encoding="utf-8")
+    workspace = Workspace.build(tmp_path)
+    run_store = RunStore(tmp_path / ".mico" / "runs")
+    session_store = SessionStore(tmp_path / ".mico" / "sessions")
+
+    first = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"read_file","args":{"path":"code.py","start":1,"end":80}}</tool>',
+            '<final>first run</final>',
+        ]),
+        workspace=workspace,
+        run_store=run_store,
+        session_store=session_store,
+    )
+    first.ask("first task")
+
+    second = Mico(
+        model_client=FakeModelClient([
+            '<final>second</final>',
+        ]),
+        workspace=workspace,
+        run_store=run_store,
+        session_store=session_store,
+    )
+    assert second.session_memory.task_summary == "first task"
+    assert "code.py" in second.session_memory.recent_files
+    assert second.ask("second task") == "second"

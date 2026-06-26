@@ -1,12 +1,14 @@
 from .agent_loop import AgentLoop
+from .memory import SessionMemoryState
 from .parser import ModelOutputParser
 from .prompt import PromptBuilder
 from .security import redact_artifact
+from .session_store import SessionStore
 from .tool_executor import ToolExecutor
 
 
 class Mico:
-    def __init__(self, model_client, workspace, run_store, approval_policy="auto", max_steps=4, approval_callback=None, event_callback=None):
+    def __init__(self, model_client, workspace, run_store, approval_policy="auto", max_steps=4, approval_callback=None, event_callback=None, session_store=None, session_id="default"):
         self.model_client = model_client
         self.workspace = workspace
         self.run_store = run_store
@@ -21,6 +23,65 @@ class Mico:
         self._last_task_state = None
         self._last_run_history_start = 0
         self.event_callback = event_callback
+        self.session_id = session_id
+        if session_store is None:
+            session_store = SessionStore(workspace.root / ".mico" / "sessions")
+        self.session_store = session_store
+        self.session_memory = self._load_session_memory()
+
+    def _load_session_memory(self):
+        data = self.session_store.load(self.session_id)
+        if data is not None:
+            return SessionMemoryState.from_dict(data.get("memory"))
+        return SessionMemoryState()
+
+    def _save_session_memory(self):
+        data = {
+            "session_id": self.session_id,
+            "memory": self.session_memory.to_dict(),
+        }
+        self.session_store.save(self.session_id, data)
+
+    def _after_tool_result(self, name, args, result):
+        import hashlib
+        meta = result.metadata if hasattr(result, "metadata") else {}
+        ok = meta.get("ok", False)
+        if not ok:
+            return
+        if name == "read_file":
+            path = args.get("path", "")
+            self.session_memory.remember_file(path)
+            content = result.content if hasattr(result, "content") else ""
+            summary = content[:200] if content else ""
+            if summary:
+                freshness = hashlib.sha256(summary.encode()).hexdigest()[:16]
+                self.session_memory.record_file_summary(path, summary, freshness=freshness)
+        elif name in ("write_file", "patch_file"):
+            path = args.get("path", "")
+            self.session_memory.invalidate_file(path)
+        if name == "read_file":
+            path = args.get("path", "")
+            ext = path.rsplit(".", 1)[-1] if "." in path else ""
+            self.session_memory.append_episodic_note(
+                "read " + path, tags=["file", ext], source="read_file:" + path)
+        elif name == "write_file":
+            path = args.get("path", "")
+            self.session_memory.append_episodic_note(
+                "wrote " + path, tags=["file", "write"], source="write_file:" + path)
+        elif name == "patch_file":
+            path = args.get("path", "")
+            self.session_memory.append_episodic_note(
+                "patched " + path, tags=["file", "edit"], source="patch_file:" + path)
+        elif name == "run_command":
+            argv = args.get("argv", [])
+            summary_cmd = " ".join(argv[:3])
+            exit_code = meta.get("exit_code", 0)
+            if exit_code == 0:
+                self.session_memory.append_episodic_note(
+                    "cmd " + summary_cmd + " ok", tags=["command"], source="run_command")
+            else:
+                self.session_memory.append_episodic_note(
+                    "cmd " + summary_cmd + " exit=" + str(exit_code), tags=["command", "error"], source="run_command")
 
     def emit_ui_event(self, event_type, payload=None):
         if self.event_callback is None:
@@ -33,13 +94,18 @@ class Mico:
     def ask(self, user_message):
         self.tool_executor.reset_run_state()
         self._last_parser_error_kind = None
-        return AgentLoop(self).run(user_message)
+        self.session_memory.set_task_summary(user_message)
+        result = AgentLoop(self).run(user_message)
+        self._save_session_memory()
+        return result
 
     def record(self, item):
         self.history.append(dict(item))
 
     def execute_tool(self, name, args):
-        return self.tool_executor.execute(name, args)
+        result = self.tool_executor.execute(name, args)
+        self._after_tool_result(name, args, result)
+        return result
 
     def emit_trace(self, task_state, event_type, payload=None):
         event = {"event": event_type, "run_id": task_state.run_id, **dict(payload or {})}
