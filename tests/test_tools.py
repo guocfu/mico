@@ -99,9 +99,168 @@ def test_patch_file_requires_approval():
     assert TOOL_SPECS["patch_file"].requires_approval is True
 
 
+def test_remember_tool_requires_approval_and_is_not_readonly():
+    assert TOOL_SPECS["remember"].requires_approval is True
+    assert TOOL_SPECS["remember"].read_only is False
+    assert TOOL_SPECS["remember"].concurrency_safe is False
+
+
 @pytest.mark.parametrize("name", ["list_files", "read_file", "search"])
 def test_readonly_tools_do_not_require_approval(name):
     assert TOOL_SPECS[name].requires_approval is False
+
+
+class TestRememberTool:
+    def test_validate_accepts_valid_args(self, tmp_path):
+        from mico.tools import validate_tool
+
+        workspace = Workspace.build(tmp_path)
+
+        validate_tool(workspace, "remember", {
+            "topic": "preferences",
+            "note": "Prefer pytest for verification.",
+            "tags": ["testing"],
+        })
+
+    def test_validate_rejects_invalid_topic(self, tmp_path):
+        from mico.tools import validate_tool
+
+        workspace = Workspace.build(tmp_path)
+
+        with pytest.raises(ValueError, match="Invalid topic"):
+            validate_tool(workspace, "remember", {
+                "topic": "../outside",
+                "note": "bad",
+            })
+
+    def test_validate_rejects_empty_note(self, tmp_path):
+        from mico.tools import validate_tool
+
+        workspace = Workspace.build(tmp_path)
+
+        with pytest.raises(ValueError, match="note"):
+            validate_tool(workspace, "remember", {
+                "topic": "notes",
+                "note": " ",
+            })
+
+    def test_validate_rejects_non_string_note(self, tmp_path):
+        from mico.tools import validate_tool
+
+        workspace = Workspace.build(tmp_path)
+
+        with pytest.raises(ValueError, match="note"):
+            validate_tool(workspace, "remember", {
+                "topic": "notes",
+                "note": 123,
+            })
+
+    def test_executor_uses_custom_handler_under_auto(self, tmp_path):
+        from mico.tool_executor import ToolExecutor
+
+        workspace = Workspace.build(tmp_path)
+        calls = []
+
+        def _handler(args):
+            calls.append(dict(args))
+            return json.dumps({
+                "__tool_metadata__": {
+                    "ok": True,
+                    "error_kind": "ok",
+                    "topic": args["topic"],
+                },
+                "remembered": True,
+            })
+
+        executor = ToolExecutor(
+            workspace,
+            approval_policy="auto",
+            custom_handlers={"remember": _handler},
+        )
+
+        result = executor.execute("remember", {
+            "topic": "preferences",
+            "note": "Prefer pytest.",
+        })
+
+        assert calls == [{"topic": "preferences", "note": "Prefer pytest."}]
+        assert result.metadata["ok"] is True
+        assert result.metadata["topic"] == "preferences"
+        assert "remembered" in result.content
+
+    def test_executor_denies_remember_under_never(self, tmp_path):
+        from mico.tool_executor import ToolExecutor
+
+        workspace = Workspace.build(tmp_path)
+        calls = []
+        executor = ToolExecutor(
+            workspace,
+            approval_policy="never",
+            custom_handlers={"remember": lambda args: calls.append(args) or "ok"},
+        )
+
+        result = executor.execute("remember", {
+            "topic": "preferences",
+            "note": "Prefer pytest.",
+        })
+
+        assert calls == []
+        assert result.metadata["ok"] is False
+        assert result.metadata["error_kind"] == "approval_denied"
+
+    def test_executor_asks_for_remember_approval(self, tmp_path):
+        from mico.tool_executor import ToolExecutor
+
+        workspace = Workspace.build(tmp_path)
+        requests = []
+        calls = []
+
+        def _approval(request):
+            requests.append(request)
+            return True
+
+        def _handler(args):
+            calls.append(dict(args))
+            return "remembered preferences"
+
+        executor = ToolExecutor(
+            workspace,
+            approval_policy="ask",
+            approval_callback=_approval,
+            custom_handlers={"remember": _handler},
+        )
+
+        result = executor.execute("remember", {
+            "topic": "preferences",
+            "note": "Prefer pytest.",
+            "tags": ["testing"],
+        })
+
+        assert requests[0]["tool_name"] == "remember"
+        assert requests[0]["args"]["topic"] == "preferences"
+        assert calls == [{"topic": "preferences", "note": "Prefer pytest.", "tags": ["testing"]}]
+        assert result.metadata["ok"] is True
+
+    def test_executor_denies_remember_when_ask_callback_denies(self, tmp_path):
+        from mico.tool_executor import ToolExecutor
+
+        workspace = Workspace.build(tmp_path)
+        calls = []
+        executor = ToolExecutor(
+            workspace,
+            approval_policy="ask",
+            approval_callback=lambda request: False,
+            custom_handlers={"remember": lambda args: calls.append(args) or "ok"},
+        )
+
+        result = executor.execute("remember", {
+            "topic": "preferences",
+            "note": "Prefer pytest.",
+        })
+
+        assert calls == []
+        assert result.metadata["ok"] is False
+        assert result.metadata["error_kind"] == "approval_denied"
 
 
 class TestPatchFile:

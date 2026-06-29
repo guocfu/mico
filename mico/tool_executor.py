@@ -28,10 +28,11 @@ def _extract_tool_metadata(content):
 
 
 class ToolExecutor:
-    def __init__(self, workspace, approval_policy="auto", approval_callback=None):
+    def __init__(self, workspace, approval_policy="auto", approval_callback=None, custom_handlers=None):
         self.workspace = workspace
         self.approval_policy = approval_policy
         self.approval_callback = approval_callback
+        self.custom_handlers = custom_handlers or {}
         self._last_tool_signature = None
         self._patched_old_texts = {}
 
@@ -125,13 +126,39 @@ class ToolExecutor:
                         metadata={**metadata, "ok": False, "blocked_by_approval": True, "error_kind": "approval_denied"},
                     )
 
-        try:
-            content = execute_validated_tool(self.workspace, name, args)
-        except ValueError as exc:
-            return ToolResult(
-                content=f"error: {exc}",
-                metadata={**metadata, "ok": False, "error_kind": "validation_error"},
-            )
+        if spec.requires_approval and self.approval_policy == "ask" and name == "remember":
+            request = {
+                "tool_name": name,
+                "tool": name,
+                "args": dict(args),
+                "topic": args.get("topic"),
+                "note": args.get("note"),
+                "tags": args.get("tags", []),
+                "summary": f"remember {args.get('topic')}: {args.get('note')}",
+            }
+            if self.approval_callback is None or not self.approval_callback(request):
+                self._last_tool_signature = signature
+                return ToolResult(
+                    content=f"error: remember not approved: {args.get('topic')}",
+                    metadata={**metadata, "ok": False, "blocked_by_approval": True, "error_kind": "approval_denied"},
+                )
+
+        if name in self.custom_handlers:
+            try:
+                content = self.custom_handlers[name](args)
+            except ValueError as exc:
+                return ToolResult(
+                    content=f"error: {exc}",
+                    metadata={**metadata, "ok": False, "error_kind": "validation_error"},
+                )
+        else:
+            try:
+                content = execute_validated_tool(self.workspace, name, args)
+            except ValueError as exc:
+                return ToolResult(
+                    content=f"error: {exc}",
+                    metadata={**metadata, "ok": False, "error_kind": "validation_error"},
+                )
         self._last_tool_signature = signature
         extracted_metadata = _extract_tool_metadata(content)
         if extracted_metadata is not None:

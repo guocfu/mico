@@ -1,6 +1,7 @@
 from .agent_loop import AgentLoop
 from .context_manager import ContextManager
 from .memory import SessionMemoryState, summarize_read_result
+from .memory_store import DurableMemory
 from .parser import ModelOutputParser
 from .prompt import PromptBuilder
 from .security import redact_artifact
@@ -16,7 +17,13 @@ class Mico:
         self.approval_policy = approval_policy
         self.max_steps = max_steps
         self.history = []
-        self.tool_executor = ToolExecutor(workspace, approval_policy=approval_policy, approval_callback=approval_callback)
+        self.durable_memory = DurableMemory(workspace.root / ".mico" / "memory")
+        self.tool_executor = ToolExecutor(
+            workspace,
+            approval_policy=approval_policy,
+            approval_callback=approval_callback,
+            custom_handlers={"remember": self._execute_remember},
+        )
         self._prompt_builder = PromptBuilder()
         self._context_manager = ContextManager(self._prompt_builder)
         self._last_prompt_metadata = None
@@ -30,6 +37,28 @@ class Mico:
             session_store = SessionStore(workspace.root / ".mico" / "sessions")
         self.session_store = session_store
         self.session_memory = self._load_session_memory()
+
+    def _execute_remember(self, args):
+        import json
+
+        result = self.durable_memory.remember(
+            args.get("topic"),
+            args.get("note"),
+            tags=args.get("tags", []),
+        )
+        metadata = {
+            "ok": True,
+            "error_kind": "ok",
+            "topic": result["topic"],
+            "tags": result["tags"],
+            "created_at": result["created_at"],
+        }
+        return json.dumps({
+            "__tool_metadata__": metadata,
+            "remembered": True,
+            "topic": result["topic"],
+            "created_at": result["created_at"],
+        }, ensure_ascii=False)
 
     def _load_session_memory(self):
         data = self.session_store.load(self.session_id)
@@ -80,6 +109,15 @@ class Mico:
             else:
                 self.session_memory.append_episodic_note(
                     "cmd " + summary_cmd + " exit=" + str(exit_code), tags=["command", "error"], source="run_command")
+        elif name == "remember":
+            topic = str(args.get("topic", "notes"))
+            note = str(args.get("note", "")).strip()
+            preview = note[:120]
+            self.session_memory.append_episodic_note(
+                "remembered " + topic + ": " + preview,
+                tags=["memory", topic],
+                source="remember:" + topic,
+            )
 
     def emit_ui_event(self, event_type, payload=None):
         if self.event_callback is None:
@@ -133,6 +171,7 @@ class Mico:
             user_message=user_message,
             history=self.history[self._last_run_history_start:],
             session_memory=self.session_memory,
+            durable_memory=self.durable_memory,
         )
         self._last_prompt_metadata = bundle.metadata
         return bundle

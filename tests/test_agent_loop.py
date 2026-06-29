@@ -1099,7 +1099,7 @@ def test_report_preserves_existing_fields_with_prompt_metadata(tmp_path):
     assert report["failure_category"] == "success"
     assert "prompt_metadata" in report
     assert report["prompt_metadata"]["approval_policy"] == "never"
-    assert report["prompt_metadata"]["restricted_tool_count"] == 3
+    assert report["prompt_metadata"]["restricted_tool_count"] == 4
 
 
 def test_model_parsed_trace_has_error_kind_on_retry(tmp_path):
@@ -2248,6 +2248,76 @@ def test_session_memory_read_file_note_text_matches_content_summary(tmp_path):
     assert memory["episodic_notes"][-1]["text"] == expected
     assert memory["episodic_notes"][-1]["source"] == "read_file:notes.txt"
     assert memory["episodic_notes"][-1]["tags"] == ["file", "txt"]
+
+
+def test_remember_tool_writes_durable_memory(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    client = FakeModelClient([
+        '<tool>{"name":"remember","args":{"topic":"preferences","note":"Prefer pytest for verification.","tags":["testing"]}}</tool>',
+        "<final>remembered</final>",
+    ])
+    agent = Mico(
+        model_client=client,
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+        approval_policy="auto",
+    )
+
+    answer = agent.ask("remember my test preference")
+
+    assert answer == "remembered"
+    topic_path = tmp_path / ".mico" / "memory" / "preferences.md"
+    assert topic_path.exists()
+    assert "Prefer pytest for verification." in topic_path.read_text(encoding="utf-8")
+    assert agent.history[1]["name"] == "remember"
+    assert agent.history[1]["metadata"]["ok"] is True
+    assert agent.history[1]["metadata"]["topic"] == "preferences"
+
+
+def test_second_run_prompt_includes_durable_memory(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    client = FakeModelClient([
+        '<tool>{"name":"remember","args":{"topic":"preferences","note":"Prefer pytest for Python verification.","tags":["testing"]}}</tool>',
+        "<final>first done</final>",
+        "<final>second done</final>",
+    ])
+    agent = Mico(
+        model_client=client,
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+        approval_policy="auto",
+    )
+
+    agent.ask("remember my verification preference")
+    agent.ask("how should I run python tests?")
+
+    second_prompt = client.prompts[2]
+    assert "Memory index:" in second_prompt
+    assert "Relevant memory:" in second_prompt
+    assert "Prefer pytest for Python verification." in second_prompt
+    assert second_prompt.rstrip().endswith("User request: how should I run python tests?")
+
+
+def test_remember_tool_denied_under_approval_never_does_not_write_memory(tmp_path):
+    workspace = Workspace.build(tmp_path)
+    client = FakeModelClient([
+        '<tool>{"name":"remember","args":{"topic":"preferences","note":"Prefer pytest."}}</tool>',
+        "<final>done</final>",
+    ])
+    agent = Mico(
+        model_client=client,
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+        approval_policy="never",
+    )
+
+    agent.ask("remember my preference")
+
+    assert agent.history[1]["metadata"]["ok"] is False
+    assert agent.history[1]["metadata"]["error_kind"] == "approval_denied"
+    topic_path = tmp_path / ".mico" / "memory" / "preferences.md"
+    if topic_path.exists():
+        assert "Prefer pytest." not in topic_path.read_text(encoding="utf-8")
 
 
 # --- ContextManager integration tests (Task 3) ---

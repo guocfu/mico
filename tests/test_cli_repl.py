@@ -244,6 +244,60 @@ def test_cli_approval_callback_non_interactive_denies():
     assert callback(["cmd", "/c", "dir"]) is False
 
 
+def test_cli_approval_callback_approves_remember_dict(monkeypatch):
+    from mico.cli import make_approval_callback
+
+    callback = make_approval_callback(interactive=True)
+    prompts = []
+
+    def _input(prompt=""):
+        prompts.append(prompt)
+        return "yes"
+
+    monkeypatch.setattr("builtins.input", _input)
+
+    assert callback({
+        "tool_name": "remember",
+        "args": {
+            "topic": "preferences",
+            "note": "Prefer pytest for verification.",
+            "tags": ["testing"],
+        },
+    }) is True
+    assert "remember" in prompts[0]
+    assert "preferences" in prompts[0]
+    assert "Prefer pytest" in prompts[0]
+
+
+def test_cli_approval_callback_denies_remember_dict(monkeypatch):
+    from mico.cli import make_approval_callback
+
+    callback = make_approval_callback(interactive=True)
+    monkeypatch.setattr("builtins.input", lambda _prompt="": "n")
+
+    assert callback({
+        "tool_name": "remember",
+        "args": {
+            "topic": "preferences",
+            "note": "Prefer pytest for verification.",
+        },
+    }) is False
+
+
+def test_cli_approval_callback_non_interactive_denies_remember_dict():
+    from mico.cli import make_approval_callback
+
+    callback = make_approval_callback(interactive=False)
+
+    assert callback({
+        "tool_name": "remember",
+        "args": {
+            "topic": "preferences",
+            "note": "Prefer pytest for verification.",
+        },
+    }) is False
+
+
 # --- REPL progress display ---
 
 

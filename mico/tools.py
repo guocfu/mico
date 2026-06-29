@@ -5,6 +5,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from .memory_store import TOPICS as MEMORY_TOPICS
+
 
 @dataclass(frozen=True)
 class ToolSpec:
@@ -50,6 +52,13 @@ TOOL_SPECS = {
     "run_command": ToolSpec(
         "Run a command as argv list with timeout.",
         '{"argv": "list[str]", "timeout": "int=30"}',
+        requires_approval=True,
+        read_only=False,
+        concurrency_safe=False,
+    ),
+    "remember": ToolSpec(
+        "Save a durable note to cross-session memory.",
+        '{"topic": "str", "note": "str", "tags": "list[str]=[]"}',
         requires_approval=True,
         read_only=False,
         concurrency_safe=False,
@@ -145,6 +154,20 @@ def validate_tool(workspace, name, args):
             raise ValueError("timeout must be a positive integer")
         if timeout > 120:
             raise ValueError("timeout must be at most 120 seconds")
+        return
+    if name == "remember":
+        topic = str(args.get("topic", "")).strip()
+        if topic not in MEMORY_TOPICS:
+            raise ValueError(f"Invalid topic {topic!r}. Must be one of: {', '.join(MEMORY_TOPICS)}")
+        note = args.get("note", "")
+        if not isinstance(note, str) or not note.strip():
+            raise ValueError("note must not be empty")
+        tags = args.get("tags", [])
+        if not isinstance(tags, list):
+            raise ValueError("tags must be a list")
+        for i, tag in enumerate(tags):
+            if not isinstance(tag, str):
+                raise ValueError(f"tags[{i}] must be a string, got {type(tag).__name__}")
         return
 
 

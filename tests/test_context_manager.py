@@ -2,6 +2,7 @@
 
 import pytest
 from mico.context_manager import ContextManager
+from mico.memory_store import DurableMemory
 from mico.prompt import PromptBuilder, PromptBundle
 from mico.memory import SessionMemoryState
 
@@ -298,6 +299,68 @@ class TestContextManagerEpisodicNotes:
         pos_auth = relevant_section.find("auth security module")
         pos_user = relevant_section.find("user model")
         assert pos_auth < pos_user, "Higher-scored note should appear first"
+
+
+class TestContextManagerDurableMemory:
+    def test_memory_index_is_included_before_current_request(self, tmp_path):
+        store = DurableMemory(tmp_path / ".mico" / "memory")
+        store.remember("preferences", "Prefer pytest for verification.", tags=["testing"])
+        cm = ContextManager(PromptBuilder())
+
+        bundle = cm.build(
+            tool_catalog=_sample_catalog(),
+            approval_policy="auto",
+            workspace_root="/tmp/ws",
+            user_message="use pytest",
+            history=[],
+            session_memory=_empty_memory(),
+            durable_memory=store,
+        )
+
+        assert "Memory index:" in bundle.text
+        assert bundle.text.index("Memory index:") < bundle.text.index("User request: use pytest")
+        assert bundle.text.rstrip().endswith("User request: use pytest")
+
+    def test_relevant_memory_includes_durable_notes(self, tmp_path):
+        store = DurableMemory(tmp_path / ".mico" / "memory")
+        store.remember("preferences", "Prefer pytest for Python verification.", tags=["testing"])
+        cm = ContextManager(PromptBuilder())
+
+        bundle = cm.build(
+            tool_catalog=_sample_catalog(),
+            approval_policy="auto",
+            workspace_root="/tmp/ws",
+            user_message="python tests",
+            history=[],
+            session_memory=_empty_memory(),
+            durable_memory=store,
+        )
+
+        assert "Relevant memory:" in bundle.text
+        relevant_start = bundle.text.index("Relevant memory:")
+        history_start = bundle.text.index("Recent history:")
+        relevant_section = bundle.text[relevant_start:history_start]
+        assert "[durable:preferences]" in relevant_section
+        assert "Prefer pytest for Python verification." in relevant_section
+
+    def test_durable_memory_metadata_is_reported(self, tmp_path):
+        store = DurableMemory(tmp_path / ".mico" / "memory")
+        store.remember("preferences", "Prefer pytest for Python verification.", tags=["testing"])
+        cm = ContextManager(PromptBuilder())
+
+        bundle = cm.build(
+            tool_catalog=_sample_catalog(),
+            approval_policy="auto",
+            workspace_root="/tmp/ws",
+            user_message="pytest",
+            history=[],
+            session_memory=_empty_memory(),
+            durable_memory=store,
+        )
+
+        assert bundle.metadata["durable_memory_notes_available"] == 1
+        assert bundle.metadata["durable_memory_notes_used"] == 1
+        assert "memory_index" in bundle.metadata["section_chars"]
 
 
 # ---------------------------------------------------------------------------

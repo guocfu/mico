@@ -22,7 +22,7 @@ class ContextManager:
         self.section_budgets = section_budgets or {}
 
     def build(self, *, tool_catalog, approval_policy, workspace_root,
-              user_message, history, session_memory):
+              user_message, history, session_memory, durable_memory=None):
         """Assemble all prompt sections and return a PromptBundle with metadata."""
         # 1. Prefix — always included
         prefix = self.prompt_builder.prefix_text(
@@ -31,30 +31,47 @@ class ContextManager:
             workspace_root=workspace_root,
         )
 
-        # 2. Working memory — only if task_summary or recent_files present
+        # 2. Durable memory index — short cross-session index, if available
+        memory_index_text = ""
+        durable_notes_available = 0
+        if durable_memory is not None:
+            index = durable_memory.render_index()
+            if index:
+                memory_index_text = "Memory index:\n" + index
+            if hasattr(durable_memory, "count_notes"):
+                durable_notes_available = durable_memory.count_notes()
+
+        # 3. Working memory — only if task_summary or recent_files present
         if session_memory.task_summary or session_memory.recent_files:
             working_memory_text = "Working memory:\n" + session_memory.render_memory_text()
         else:
             working_memory_text = ""
 
-        # 3. Relevant memory (episodic notes) — only if retrieval returns matches
+        # 4. Relevant memory — episodic notes plus matching durable notes
         retrieved_notes = self._retrieve_episodic_notes(session_memory, user_message, limit=3)
-        if retrieved_notes:
-            relevant_memory_text = "Relevant memory:\n" + "\n".join(
-                "- " + note["text"] for note in retrieved_notes
-            )
+        durable_notes = []
+        if durable_memory is not None:
+            durable_notes = durable_memory.retrieve(user_message, limit=3)
+
+        relevant_lines = ["- " + note["text"] for note in retrieved_notes]
+        relevant_lines.extend(
+            "- [durable:" + note["topic"] + "] " + note["text"]
+            for note in durable_notes
+        )
+        if relevant_lines:
+            relevant_memory_text = "Relevant memory:\n" + "\n".join(relevant_lines)
         else:
             relevant_memory_text = ""
 
-        # 4. History — always included
+        # 5. History — always included
         recent_history = history[-MAX_HISTORY_ITEMS:]
         history_text = self.prompt_builder.history_text(recent_history)
 
-        # 5. Current request — always included, always last
+        # 6. Current request — always included, always last
         current_request_text = self.prompt_builder.current_request_text(user_message)
 
         # Concatenate all non-empty sections with newlines
-        sections = [prefix, working_memory_text, relevant_memory_text, history_text, current_request_text]
+        sections = [prefix, memory_index_text, working_memory_text, relevant_memory_text, history_text, current_request_text]
         non_empty = [s for s in sections if s]
         text = "\n".join(non_empty) + "\n"
 
@@ -68,6 +85,7 @@ class ContextManager:
             "over_budget": len(text) > self.total_budget,
             "section_chars": {
                 "prefix": len(prefix),
+                "memory_index": len(memory_index_text),
                 "working_memory": len(working_memory_text),
                 "relevant_memory": len(relevant_memory_text),
                 "history": len(history_text),
@@ -80,6 +98,8 @@ class ContextManager:
             "approval_policy": approval_policy,
             "episodic_notes_available": len(session_memory.episodic_notes),
             "episodic_notes_used": len(retrieved_notes),
+            "durable_memory_notes_available": durable_notes_available,
+            "durable_memory_notes_used": len(durable_notes),
             "current_request_chars": len(user_message),
             "current_request_preserved_rate": 1.0,
         }

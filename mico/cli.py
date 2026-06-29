@@ -100,34 +100,55 @@ def _approval_prefix(argv):
 
 
 def make_approval_callback(interactive, cwd=None):
-    """Create an approval callback for shell command authorization.
+    """Create an approval callback for tool authorization.
 
-    Returns a callable(argv) -> bool.
-    In interactive mode, prompts user with cwd/argv and supports:
-    y/yes for one-time approval, a/always for session prefix approval.
-    In non-interactive mode, always denies shell commands.
+    Returns a callable(request) -> bool.
+    In interactive mode, supports both:
+    - callback(argv): prompt for shell command approval (list arg)
+    - callback(request): prompt for generic tool approval (dict arg)
+    In non-interactive mode, always denies.
     """
     allowed_prefixes = set()
 
-    def _callback(argv):
+    def _callback(request):
         if not interactive:
             return False
+        # Dict-style request for generic tools (e.g., remember)
+        if isinstance(request, dict):
+            args = request.get("args", {})
+            if not isinstance(args, dict):
+                args = {}
+            tool = request.get("tool_name") or request.get("tool") or "?"
+            topic = request.get("topic", args.get("topic", "?"))
+            note = request.get("note", args.get("note", ""))
+            preview = note[:60] + '...' if len(note) > 60 else note
+            prompt_str = (
+                'Allow ' + tool + ' tool? topic=' + topic + ' note="' + preview + '"' + '\\n'
+                '  Confirm [y/yes] or deny [n/no]: '
+            )
+            try:
+                answer = input(prompt_str).strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                return False
+            return answer in ('y', 'yes')
+        # List-style request for run_command (existing behavior)
+        argv = request
         prefix = _approval_prefix(argv)
         if prefix in allowed_prefixes:
             return True
-        prompt = (
-            f"Allow shell command? cwd={cwd} argv={argv}\n"
-            f"  Similar prefix: {prefix}\n"
-            "  Confirm [y/yes], always allow similar [a/always], deny [n/no]: "
+        prompt_str = (
+            'Allow shell command? cwd=' + str(cwd) + ' argv=' + repr(argv) + '\\n'
+            '  Similar prefix: ' + prefix + '\\n'
+            '  Confirm [y/yes], always allow similar [a/always], deny [n/no]: '
         )
         try:
-            answer = input(prompt).strip().lower()
+            answer = input(prompt_str).strip().lower()
         except (EOFError, KeyboardInterrupt):
             return False
-        if answer in ("a", "always"):
+        if answer in ('a', 'always'):
             allowed_prefixes.add(prefix)
             return True
-        return answer in ("y", "yes")
+        return answer in ('y', 'yes')
 
     return _callback
 
