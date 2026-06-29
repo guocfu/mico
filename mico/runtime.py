@@ -1,4 +1,5 @@
 from .agent_loop import AgentLoop
+from .context_manager import ContextManager
 from .memory import SessionMemoryState, summarize_read_result
 from .parser import ModelOutputParser
 from .prompt import PromptBuilder
@@ -17,6 +18,7 @@ class Mico:
         self.history = []
         self.tool_executor = ToolExecutor(workspace, approval_policy=approval_policy, approval_callback=approval_callback)
         self._prompt_builder = PromptBuilder()
+        self._context_manager = ContextManager(self._prompt_builder)
         self._last_prompt_metadata = None
         self._model_output_parser = ModelOutputParser()
         self._last_parser_error_kind = None
@@ -124,12 +126,13 @@ class Mico:
         return self.build_prompt_bundle(user_message).text
 
     def build_prompt_bundle(self, user_message):
-        bundle = self._prompt_builder.build(
+        bundle = self._context_manager.build(
             tool_catalog=self.tool_executor.tool_catalog(),
             approval_policy=self.approval_policy,
             workspace_root=str(self.workspace.root),
             user_message=user_message,
-            history=self.history,
+            history=self.history[self._last_run_history_start:],
+            session_memory=self.session_memory,
         )
         self._last_prompt_metadata = bundle.metadata
         return bundle

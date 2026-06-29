@@ -2248,3 +2248,140 @@ def test_session_memory_read_file_note_text_matches_content_summary(tmp_path):
     assert memory["episodic_notes"][-1]["text"] == expected
     assert memory["episodic_notes"][-1]["source"] == "read_file:notes.txt"
     assert memory["episodic_notes"][-1]["tags"] == ["file", "txt"]
+
+
+# --- ContextManager integration tests (Task 3) ---
+
+
+def test_second_run_prompt_includes_working_memory(tmp_path):
+    """Second ask() should include working memory from first run in its prompt."""
+    (tmp_path / "notes.txt").write_text("hello mico\nbye\n", encoding="utf-8")
+    workspace = Workspace.build(tmp_path)
+    session_store = SessionStore(tmp_path / ".mico" / "sessions")
+    client = FakeModelClient([
+        '<tool>{"name":"read_file","args":{"path":"notes.txt","start":1,"end":80}}</tool>',
+        "<final>first done</final>",
+        "<final>second done</final>",
+    ])
+    agent = Mico(
+        model_client=client,
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+        session_store=session_store,
+    )
+
+    agent.ask("first task read file")
+    agent.ask("second task")
+
+    # prompts[2] is the first complete() call of the second ask
+    second_prompt = client.prompts[2]
+    assert "Task:" in second_prompt
+    assert "notes.txt" in second_prompt
+
+
+def test_second_run_prompt_includes_episodic_note(tmp_path):
+    """Second ask() should retrieve episodic notes from first run."""
+    (tmp_path / "notes.txt").write_text("hello mico\nbye\n", encoding="utf-8")
+    workspace = Workspace.build(tmp_path)
+    session_store = SessionStore(tmp_path / ".mico" / "sessions")
+    client = FakeModelClient([
+        '<tool>{"name":"read_file","args":{"path":"notes.txt","start":1,"end":80}}</tool>',
+        "<final>first done</final>",
+        "<final>second done</final>",
+    ])
+    agent = Mico(
+        model_client=client,
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+        session_store=session_store,
+    )
+
+    agent.ask("first task read notes")
+    # Second ask must contain a token that matches the episodic note
+    agent.ask("second task about notes.txt")
+
+    second_prompt = client.prompts[2]
+    assert "Relevant memory:" in second_prompt
+
+
+def test_second_run_uses_history_slice(tmp_path):
+    """Second ask() prompt history section should not contain items from first run."""
+    (tmp_path / "a.txt").write_text("aaa\n", encoding="utf-8")
+    (tmp_path / "b.txt").write_text("bbb\n", encoding="utf-8")
+    workspace = Workspace.build(tmp_path)
+    session_store = SessionStore(tmp_path / ".mico" / "sessions")
+    client = FakeModelClient([
+        '<tool>{"name":"read_file","args":{"path":"a.txt","start":1,"end":80}}</tool>',
+        "<final>first done</final>",
+        '<tool>{"name":"read_file","args":{"path":"b.txt","start":1,"end":80}}</tool>',
+        "<final>second done</final>",
+    ])
+    agent = Mico(
+        model_client=client,
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+        session_store=session_store,
+    )
+
+    agent.ask("first read a")
+    agent.ask("second read b")
+
+    first_prompt = client.prompts[0]
+    second_prompt = client.prompts[2]
+    # First prompt should not reference b.txt (only first run history)
+    assert "b.txt" not in first_prompt
+    # Second prompt's history section should only contain current run items.
+    # Extract history section: between "Recent history:" and "User request:"
+    history_start = second_prompt.index("Recent history:")
+    history_end = second_prompt.index("User request:")
+    history_section = second_prompt[history_start:history_end]
+    # a.txt should NOT appear in the history section (only in working memory/episodic)
+    assert "a.txt" not in history_section
+    assert "b.txt" not in history_section  # no tool results yet in second run
+
+
+def test_current_request_is_last_in_runtime_prompt(tmp_path):
+    """The current request should appear at the end of the runtime prompt."""
+    workspace = Workspace.build(tmp_path)
+    client = FakeModelClient(["<final>ok</final>"])
+    agent = Mico(
+        model_client=client,
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    agent.ask("inspect files")
+
+    prompt = client.prompts[0]
+    assert prompt.rstrip().endswith("User request: inspect files")
+
+
+def test_prompt_metadata_from_context_manager(tmp_path):
+    """Prompt metadata should include section_chars and episodic_notes fields from ContextManager."""
+    (tmp_path / "notes.txt").write_text("hello\n", encoding="utf-8")
+    workspace = Workspace.build(tmp_path)
+    session_store = SessionStore(tmp_path / ".mico" / "sessions")
+    client = FakeModelClient([
+        '<tool>{"name":"read_file","args":{"path":"notes.txt","start":1,"end":80}}</tool>',
+        "<final>done</final>",
+    ])
+    agent = Mico(
+        model_client=client,
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+        session_store=session_store,
+    )
+
+    agent.ask("read file")
+
+    meta = agent._last_prompt_metadata
+    assert "section_chars" in meta
+    assert isinstance(meta["section_chars"], dict)
+    assert "prefix" in meta["section_chars"]
+    assert "working_memory" in meta["section_chars"]
+    assert "history" in meta["section_chars"]
+    assert "current_request" in meta["section_chars"]
+    assert "episodic_notes_available" in meta
+    assert isinstance(meta["episodic_notes_available"], int)
+    assert "episodic_notes_used" in meta
+    assert isinstance(meta["episodic_notes_used"], int)

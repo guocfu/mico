@@ -285,3 +285,67 @@ def test_detect_available_shells_returns_list():
     from mico.prompt import _SHELL_NAMES
     for name in result:
         assert name in _SHELL_NAMES
+
+
+# --- Task 1: Section factory tests ---
+
+def test_prompt_current_request_is_last_section():
+    """User request must be the last section in the prompt."""
+    builder = PromptBuilder()
+    bundle = builder.build(
+        tool_catalog=_sample_catalog(),
+        approval_policy="auto",
+        workspace_root="/tmp/ws",
+        user_message="inspect files",
+        history=[{"role": "user", "content": "prev"}],
+    )
+    text = bundle.text.strip()
+    assert text.endswith("User request: inspect files"), f"Prompt does not end with current request, ends with: ...{text[-100:]}"
+
+
+def test_prompt_format_reminder_before_current_request():
+    """Format reminder must appear before current request, not after."""
+    builder = PromptBuilder()
+    bundle = builder.build(
+        tool_catalog=_sample_catalog(),
+        approval_policy="auto",
+        workspace_root="/tmp/ws",
+        user_message="inspect files",
+        history=[],
+    )
+    text = bundle.text
+    reminder_pos = text.find("Reminder:")
+    request_pos = text.find("User request:")
+    assert reminder_pos >= 0, "Reminder not found"
+    assert request_pos >= 0, "User request not found"
+    assert reminder_pos < request_pos, f"Reminder (pos {reminder_pos}) should be before User request (pos {request_pos})"
+
+
+def test_prompt_builder_has_prefix_text_method():
+    """PromptBuilder should expose prefix_text as a section factory method."""
+    builder = PromptBuilder()
+    text = builder.prefix_text(
+        tool_catalog=_sample_catalog(),
+        approval_policy="auto",
+        workspace_root="/tmp/ws",
+    )
+    assert isinstance(text, str)
+    assert "You are mico" in text
+    assert "Reminder:" in text  # format_reminder is in prefix
+
+
+def test_prompt_builder_has_history_text_method():
+    """PromptBuilder should expose history_text as a section factory method."""
+    builder = PromptBuilder()
+    history = [{"role": "user", "content": "hi"}]
+    text = builder.history_text(history)
+    assert isinstance(text, str)
+    assert "user: hi" in text
+
+
+def test_prompt_builder_has_current_request_text_method():
+    """PromptBuilder should expose current_request_text as a section factory method."""
+    builder = PromptBuilder()
+    text = builder.current_request_text("do something")
+    assert isinstance(text, str)
+    assert "User request: do something" in text

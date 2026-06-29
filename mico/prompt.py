@@ -29,17 +29,15 @@ class PromptBuilder:
         recent = history[-self.MAX_HISTORY_ITEMS:]
         history_items_used = len(recent)
 
-        text = (
-            f"{self._static_prefix()}\n"
-            f"{self._response_contract()}\n\n"
-            f"{self._runtime_policy(approval_policy)}\n"
-            f"{self._tool_catalog(tool_catalog)}\n\n"
-            f"{self._system_context()}\n"
-            f"{self._workspace_context(workspace_root)}\n"
-            f"{self._current_request(user_message)}\n"
-            f"{self._recent_history(recent)}\n"
-            f"{self._format_reminder()}\n"
+        prefix = self.prefix_text(
+            tool_catalog=tool_catalog,
+            approval_policy=approval_policy,
+            workspace_root=workspace_root,
         )
+        hist = self.history_text(recent)
+        request = self.current_request_text(user_message)
+
+        text = f"{prefix}\n{hist}\n{request}\n"
 
         tool_count = len(tool_catalog)
         restricted_tool_count = sum(1 for t in tool_catalog if not t["allowed"])
@@ -54,6 +52,26 @@ class PromptBuilder:
             "current_request_chars": len(user_message),
         }
         return PromptBundle(text=text, metadata=metadata)
+
+    def prefix_text(self, *, tool_catalog, approval_policy, workspace_root):
+        """Assemble the full prefix: static prefix through format_reminder."""
+        return (
+            f"{self._static_prefix()}\n"
+            f"{self._response_contract()}\n\n"
+            f"{self._runtime_policy(approval_policy)}\n"
+            f"{self._tool_catalog(tool_catalog)}\n\n"
+            f"{self._system_context()}\n"
+            f"{self._workspace_context(workspace_root)}\n"
+            f"{self._format_reminder()}"
+        )
+
+    def history_text(self, history):
+        """Assemble history text from recent history items."""
+        return self._recent_history(history)
+
+    def current_request_text(self, user_message):
+        """Assemble the current request text."""
+        return self._current_request(user_message)
 
     @staticmethod
     def _static_prefix():
