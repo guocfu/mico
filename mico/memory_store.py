@@ -1,8 +1,40 @@
 """Cross-session durable memory backed by .mico/memory markdown files."""
 
+import json
 import re
 import time
 from pathlib import Path
+
+ASCII_TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
+CJK_CHAR_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+
+
+NOTE_BLOCK_RE = re.compile(
+    r"^## Note (?P<created_at>\S+)\n```json\n(?P<payload>.*?)\n```",
+    re.MULTILINE | re.DOTALL,
+)
+
+MAX_STORED_NOTE_CHARS = 2000
+MAX_RETRIEVED_NOTE_CHARS = 500
+
+
+def _clip_text(text, limit):
+    value = str(text)
+    if len(value) <= limit:
+        return value, False
+    return value[: limit - 3] + "...", True
+
+
+def _memory_tokens(text):
+    value = str(text or "").lower()
+    tokens = set(ASCII_TOKEN_RE.findall(value))
+    cjk_chars = CJK_CHAR_RE.findall(value)
+    tokens.update(cjk_chars)
+    tokens.update(
+        "".join(cjk_chars[index : index + 2])
+        for index in range(max(0, len(cjk_chars) - 1))
+    )
+    return tokens
 
 
 TOPICS = ("profile", "projects", "preferences", "decisions", "conventions", "notes")
@@ -46,10 +78,12 @@ class DurableMemory:
 
         created_at = _now_iso()
         tags_list = list(tags or [])
+        stored_text, truncated = _clip_text(note.strip(), MAX_STORED_NOTE_CHARS)
         entry = {
             "created_at": created_at,
             "tags": tags_list,
-            "text": note.strip(),
+            "text": stored_text,
+            "truncated": truncated,
         }
 
         topic_path = self.memory_dir / f"{topic}.md"
@@ -63,6 +97,7 @@ class DurableMemory:
             "note": entry["text"],
             "tags": tags_list,
             "created_at": created_at,
+            "truncated": truncated,
         }
 
     def render_index(self, max_chars=2000):
@@ -74,32 +109,33 @@ class DurableMemory:
             return ""
         return content[:max_chars]
 
-    def retrieve(self, query, limit=3):
-        query_tokens = set(re.findall(r"[A-Za-z0-9_]+", str(query).lower()))
+    def retrieve(self, query, limit=3, max_text_chars=MAX_RETRIEVED_NOTE_CHARS):
+        query_tokens = _memory_tokens(query)
         if not query_tokens:
             return []
 
         scored = []
         for topic in self.TOPICS:
+            topic_tokens = _memory_tokens(topic)
             for note in self.read_topic(topic):
-                score = 0
-                text_lower = note.get("text", "").lower()
-                tags_set = {tag.lower() for tag in note.get("tags", [])}
-                for token in query_tokens:
-                    if token == topic:
+                note_tokens = _memory_tokens(note.get("text", ""))
+                for tag in note.get("tags", []):
+                    note_tokens.update(_memory_tokens(tag))
+                matches = query_tokens & (note_tokens | topic_tokens)
+                if matches:
+                    score = len(matches)
+                    if query_tokens & topic_tokens:
                         score += 2
-                    if token in text_lower or token in tags_set:
-                        score += 1
-                if score > 0:
                     scored.append((score, note.get("created_at", ""), topic, note))
 
         scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
         return [
             {
                 "topic": topic,
-                "text": note.get("text", ""),
+                "text": _clip_text(note.get("text", ""), max_text_chars)[0],
                 "tags": note.get("tags", []),
                 "created_at": note.get("created_at", ""),
+                "truncated": bool(note.get("truncated", False) or _clip_text(note.get("text", ""), max_text_chars)[1]),
             }
             for _, _, topic, note in scored[:limit]
         ]
@@ -119,6 +155,27 @@ class DurableMemory:
         if not content.strip():
             return []
 
+        notes = []
+        for match in NOTE_BLOCK_RE.finditer(content):
+            try:
+                payload = json.loads(match.group("payload"))
+            except json.JSONDecodeError:
+                continue
+            text = payload.get("text", "")
+            tags = payload.get("tags", [])
+            if isinstance(text, str) and isinstance(tags, list):
+                notes.append({
+                    "created_at": str(payload.get("created_at", match.group("created_at"))),
+                    "tags": [tag for tag in tags if isinstance(tag, str)],
+                    "text": text,
+                    "truncated": bool(payload.get("truncated", False)),
+                })
+        if notes:
+            return notes
+
+        return self._read_legacy_notes(content)
+
+    def _read_legacy_notes(self, content):
         notes = []
         blocks = re.split(r"^## Note\s*$", content, flags=re.MULTILINE)
         for block in blocks:
@@ -147,20 +204,24 @@ class DurableMemory:
 
             text = "\n".join(text_lines).strip()
             if text:
-                notes.append({"created_at": created_at, "tags": tags, "text": text})
+                notes.append({"created_at": created_at, "tags": tags, "text": text, "truncated": False})
 
         return notes
 
     def _write_notes_to_file(self, filepath, topic, notes):
         parts = [f"# {topic}", ""]
         for note in notes:
-            parts.append("## Note")
-            parts.append(f"- created_at: {note.get('created_at', '')}")
-            tags = note.get("tags", [])
-            if tags:
-                parts.append(f"- tags: {', '.join(tags)}")
-            parts.append("")
-            parts.append(note.get("text", ""))
+            created_at = note.get("created_at", "")
+            payload = json.dumps({
+                "created_at": created_at,
+                "tags": note.get("tags", []),
+                "text": note.get("text", ""),
+                "truncated": bool(note.get("truncated", False)),
+            }, ensure_ascii=False, separators=(",", ":"))
+            parts.append(f"## Note {created_at}")
+            parts.append("```json")
+            parts.append(payload)
+            parts.append("```")
             parts.append("")
         filepath.write_text("\n".join(parts), encoding="utf-8")
 

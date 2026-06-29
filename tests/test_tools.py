@@ -241,6 +241,15 @@ class TestRememberTool:
         assert calls == [{"topic": "preferences", "note": "Prefer pytest.", "tags": ["testing"]}]
         assert result.metadata["ok"] is True
 
+    def test_run_tool_remember_reports_handler_required(self, tmp_path):
+        workspace = Workspace.build(tmp_path)
+
+        with pytest.raises(ValueError, match="DurableMemory handler"):
+            run_tool(workspace, "remember", {
+                "topic": "preferences",
+                "note": "Prefer pytest.",
+            })
+
     def test_executor_denies_remember_when_ask_callback_denies(self, tmp_path):
         from mico.tool_executor import ToolExecutor
 

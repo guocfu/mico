@@ -284,6 +284,16 @@ def test_cli_approval_callback_denies_remember_dict(monkeypatch):
     }) is False
 
 
+def test_cli_approval_help_mentions_remember(capsys):
+    from mico.cli import build_arg_parser
+
+    with pytest.raises(SystemExit):
+        build_arg_parser().parse_args(["--help"])
+
+    captured = capsys.readouterr()
+    assert "remember" in captured.out
+
+
 def test_cli_approval_callback_non_interactive_denies_remember_dict():
     from mico.cli import make_approval_callback
 

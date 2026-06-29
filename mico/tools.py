@@ -184,6 +184,8 @@ def execute_validated_tool(workspace, name, args):
         return _write_file(workspace, args)
     if name == "run_command":
         return _run_command(workspace, args)
+    if name == "remember":
+        raise ValueError("remember requires a DurableMemory handler")
     raise ValueError(f"unknown tool: {name}")
 
 

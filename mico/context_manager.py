@@ -100,6 +100,7 @@ class ContextManager:
             "episodic_notes_used": len(retrieved_notes),
             "durable_memory_notes_available": durable_notes_available,
             "durable_memory_notes_used": len(durable_notes),
+            "durable_memory_notes_truncated": sum(1 for note in durable_notes if note.get("truncated")),
             "current_request_chars": len(user_message),
             "current_request_preserved_rate": 1.0,
         }

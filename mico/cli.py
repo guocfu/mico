@@ -21,7 +21,10 @@ def build_arg_parser():
         "--approval",
         choices=("auto", "ask", "never"),
         default="ask",
-        help="Tool approval policy; ask: confirm shell commands; auto: allow all; never: block write tools.",
+        help=(
+            "Tool approval policy; ask: confirm selected approval-required tools "
+            "such as shell commands and remember; auto: allow all; never: block write tools."
+        ),
     )
     parser.add_argument(
         "--provider",

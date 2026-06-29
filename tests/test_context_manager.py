@@ -362,6 +362,24 @@ class TestContextManagerDurableMemory:
         assert bundle.metadata["durable_memory_notes_used"] == 1
         assert "memory_index" in bundle.metadata["section_chars"]
 
+    def test_relevant_durable_memory_is_clipped_and_reported(self, tmp_path):
+        store = DurableMemory(tmp_path / ".mico" / "memory")
+        store.remember("notes", "python " + ("x" * 1000))
+        cm = ContextManager(PromptBuilder())
+
+        bundle = cm.build(
+            tool_catalog=_sample_catalog(),
+            approval_policy="auto",
+            workspace_root="/tmp/ws",
+            user_message="python",
+            history=[],
+            session_memory=_empty_memory(),
+            durable_memory=store,
+        )
+
+        assert bundle.metadata["durable_memory_notes_truncated"] == 1
+        assert len(bundle.text) < 10000
+
 
 # ---------------------------------------------------------------------------
 # History limiting
