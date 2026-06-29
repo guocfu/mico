@@ -3,6 +3,7 @@ import os
 import sys
 from pathlib import Path
 
+from .banner import print_banner
 from .dotenv import load_dotenv
 from .providers import FakeModelClient, OpenAICompatibleModelClient
 from .runtime import Mico
@@ -240,8 +241,17 @@ def build_console_renderer():
     return _render
 
 
-def run_repl(agent):
-    print("mico interactive mode (Ctrl+C or Ctrl+D to exit)")
+def run_repl(agent, config=None):
+    if config:
+        print_banner(
+            workspace=config.get("workspace", "."),
+            model=config.get("model", "unknown"),
+            provider=config.get("provider", "unknown"),
+            approval=config.get("approval", "auto"),
+            max_steps=config.get("max_steps", 8),
+        )
+    else:
+        print("mico interactive mode (Ctrl+C or Ctrl+D to exit)")
     try:
         while True:
             try:
@@ -271,7 +281,14 @@ def main(argv=None):
             raise SystemExit("--verify-cmd is only supported in one-shot mode")
         renderer = build_console_renderer() if interactive else None
         agent = build_agent(args, approval_callback=approval_cb, event_callback=renderer)
-        return run_repl(agent)
+        config = {
+            "workspace": args.cwd,
+            "model": args.model or "unknown",
+            "provider": args.provider or "auto",
+            "approval": args.approval,
+            "max_steps": args.max_steps,
+        }
+        return run_repl(agent, config=config)
     agent = build_agent(args, approval_callback=approval_cb)
     final_answer = agent.ask(prompt)
     print(final_answer)
