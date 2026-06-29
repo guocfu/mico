@@ -116,3 +116,18 @@ class SessionMemoryState:
             state.next_note_index = 0
         state.updated_at = str(data.get("updated_at", _now_iso()))
         return state
+
+
+def summarize_read_result(result, limit=180):
+    content = result.content if hasattr(result, "content") else result
+    if content is None:
+        content = ""
+    lines = [line.strip() for line in str(content).splitlines() if line.strip()]
+    if not lines:
+        return "(empty)"
+    if lines[0].startswith("# "):
+        lines = lines[1:]
+    if not lines:
+        return "(empty)"
+    summary = " | ".join(lines[:3])
+    return summary[:limit]

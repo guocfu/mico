@@ -1,4 +1,4 @@
-from mico.memory import SessionMemoryState
+from mico.memory import SessionMemoryState, summarize_read_result
 
 
 def test_default_state_has_empty_fields():
@@ -161,3 +161,30 @@ def test_render_memory_text_with_content():
     assert "fix auth" in text
     assert "main.py" in text
     assert "FastAPI entry" in text
+
+
+class ReadResult:
+    def __init__(self, content):
+        self.content = content
+
+
+def test_summarize_read_result_skips_read_file_header_and_uses_first_three_lines():
+    result = ReadResult("# notes.txt\n   1: alpha\n   2: beta\n   3: gamma\n   4: delta")
+
+    assert summarize_read_result(result) == "1: alpha | 2: beta | 3: gamma"
+
+
+def test_summarize_read_result_returns_empty_when_only_header_or_blank_lines():
+    result = ReadResult("# empty.txt\n\n   \n")
+
+    assert summarize_read_result(result) == "(empty)"
+
+
+def test_summarize_read_result_respects_limit():
+    result = ReadResult("# long.txt\n   1: " + ("x" * 300))
+
+    assert summarize_read_result(result, limit=20) == ("1: " + ("x" * 17))
+
+
+def test_summarize_read_result_accepts_plain_string_fallback():
+    assert summarize_read_result("alpha\n\nbeta\ngamma\ndelta") == "alpha | beta | gamma"

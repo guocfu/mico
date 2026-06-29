@@ -2221,3 +2221,30 @@ def test_session_memory_loaded_by_new_mico_instance(tmp_path):
     assert second.session_memory.task_summary == "first task"
     assert "code.py" in second.session_memory.recent_files
     assert second.ask("second task") == "second"
+
+
+def test_session_memory_read_file_note_text_matches_content_summary(tmp_path):
+    (tmp_path / "notes.txt").write_text(
+        "alpha\nbeta\ngamma\ndelta\n",
+        encoding="utf-8",
+    )
+    workspace = Workspace.build(tmp_path)
+    agent = Mico(
+        model_client=FakeModelClient([
+            '<tool>{"name":"read_file","args":{"path":"notes.txt","start":1,"end":80}}</tool>',
+            "<final>done</final>",
+        ]),
+        workspace=workspace,
+        run_store=RunStore(tmp_path / ".mico" / "runs"),
+    )
+
+    agent.ask("read file")
+
+    data = json.loads((tmp_path / ".mico" / "sessions" / "default.json").read_text(encoding="utf-8"))
+    memory = data["memory"]
+    expected = "1: alpha | 2: beta | 3: gamma"
+
+    assert memory["file_summaries"]["notes.txt"]["summary"] == expected
+    assert memory["episodic_notes"][-1]["text"] == expected
+    assert memory["episodic_notes"][-1]["source"] == "read_file:notes.txt"
+    assert memory["episodic_notes"][-1]["tags"] == ["file", "txt"]

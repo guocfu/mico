@@ -1,5 +1,5 @@
 from .agent_loop import AgentLoop
-from .memory import SessionMemoryState
+from .memory import SessionMemoryState, summarize_read_result
 from .parser import ModelOutputParser
 from .prompt import PromptBuilder
 from .security import redact_artifact
@@ -51,20 +51,16 @@ class Mico:
         if name == "read_file":
             path = args.get("path", "")
             self.session_memory.remember_file(path)
-            content = result.content if hasattr(result, "content") else ""
-            summary = content[:200] if content else ""
-            if summary:
-                freshness = hashlib.sha256(summary.encode()).hexdigest()[:16]
-                self.session_memory.record_file_summary(path, summary, freshness=freshness)
+            summary = summarize_read_result(result)
+            freshness = hashlib.sha256(summary.encode()).hexdigest()[:16]
+            self.session_memory.record_file_summary(path, summary, freshness=freshness)
+            ext = path.rsplit(".", 1)[-1] if "." in path else ""
+            self.session_memory.append_episodic_note(
+                summary, tags=["file", ext], source="read_file:" + path)
         elif name in ("write_file", "patch_file"):
             path = args.get("path", "")
             self.session_memory.invalidate_file(path)
-        if name == "read_file":
-            path = args.get("path", "")
-            ext = path.rsplit(".", 1)[-1] if "." in path else ""
-            self.session_memory.append_episodic_note(
-                "read " + path, tags=["file", ext], source="read_file:" + path)
-        elif name == "write_file":
+        if name == "write_file":
             path = args.get("path", "")
             self.session_memory.append_episodic_note(
                 "wrote " + path, tags=["file", "write"], source="write_file:" + path)
