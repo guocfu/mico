@@ -75,12 +75,15 @@ class TestContextManagerConstruction:
         cm = ContextManager(PromptBuilder())
         assert cm.prompt_builder is not None
         assert cm.total_budget == 10000
-        assert cm.section_budgets == {}
+        assert "prefix" in cm.section_budgets
+        assert "history" in cm.section_budgets
+        assert cm.section_floors["prefix"] == 1400
 
     def test_instantiation_with_custom_budget(self):
         cm = ContextManager(PromptBuilder(), total_budget=5000, section_budgets={"prefix": 2000})
         assert cm.total_budget == 5000
-        assert cm.section_budgets == {"prefix": 2000}
+        assert cm.section_budgets["prefix"] == 2000
+        assert "history" in cm.section_budgets
 
 
 # ---------------------------------------------------------------------------
@@ -386,7 +389,7 @@ class TestContextManagerDurableMemory:
 # ---------------------------------------------------------------------------
 
 class TestContextManagerHistoryLimiting:
-    def test_history_limited_to_6_items(self):
+    def test_history_recent_window_and_older_summary(self):
         cm = ContextManager(PromptBuilder())
         history = [{"role": "user", "content": f"msg{i}"} for i in range(10)]
         bundle = cm.build(
@@ -397,10 +400,99 @@ class TestContextManagerHistoryLimiting:
             history=history,
             session_memory=_empty_memory(),
         )
+        # Recent 6 items should be in "Recent history"
         assert "msg9" in bundle.text
         assert "msg4" in bundle.text
-        assert "msg3" not in bundle.text
-        assert "msg2" not in bundle.text
+        # Older items should appear in "Older history summary"
+        assert "Older history summary:" in bundle.text
+        assert "msg3" in bundle.text  # older item summarized
+        assert bundle.metadata["history_items_compacted"] == 4
+
+
+class TestContextManagerHistoryGovernance:
+    def test_older_write_and_patch_history_redacts_large_args(self):
+        cm = ContextManager(PromptBuilder(), total_budget=3200)
+        history = [
+            {"role": "tool", "name": "write_file", "args": {"path": "src/a.py", "content": "SECRET_CONTENT" * 50}, "content": "wrote", "metadata": {"ok": True}},
+            {"role": "tool", "name": "patch_file", "args": {"path": "src/b.py", "old_text": "OLD_SECRET" * 50, "new_text": "NEW_SECRET" * 50}, "content": "patched", "metadata": {"ok": True}},
+            {"role": "user", "content": "later user message"},
+            {"role": "assistant", "content": "later assistant message"},
+            {"role": "user", "content": "recent user message"},
+            {"role": "assistant", "content": "recent assistant message"},
+            {"role": "tool", "name": "run_command", "args": {"argv": ["python", "-m", "pytest"]}, "content": "ok", "metadata": {"ok": True, "exit_code": 0}},
+        ]
+
+        bundle = cm.build(
+            tool_catalog=_sample_catalog(),
+            approval_policy="auto",
+            workspace_root="/tmp/ws",
+            user_message="continue",
+            history=history,
+            session_memory=_empty_memory(),
+        )
+
+        assert "SECRET_CONTENT" not in bundle.text
+        assert "OLD_SECRET" not in bundle.text
+        assert "NEW_SECRET" not in bundle.text
+        assert "write_file path=src/a.py" in bundle.text
+        assert "patch_file path=src/b.py" in bundle.text
+
+    def test_older_read_file_ranges_are_deduplicated_and_limited(self):
+        cm = ContextManager(PromptBuilder(), total_budget=3600)
+        history = []
+        for i in range(10):
+            history.append({
+                "role": "tool",
+                "name": "read_file",
+                "args": {"path": "src/large.py", "start": i * 10, "end": i * 10 + 9},
+                "content": "line content " + ("x" * 100),
+                "metadata": {"ok": True},
+            })
+        history.extend([
+            {"role": "user", "content": "recent user"},
+            {"role": "assistant", "content": "recent assistant"},
+            {"role": "user", "content": "recent user 2"},
+            {"role": "assistant", "content": "recent assistant 2"},
+            {"role": "user", "content": "recent user 3"},
+            {"role": "assistant", "content": "recent assistant 3"},
+        ])
+
+        bundle = cm.build(
+            tool_catalog=_sample_catalog(),
+            approval_policy="auto",
+            workspace_root="/tmp/ws",
+            user_message="continue",
+            history=history,
+            session_memory=_empty_memory(),
+        )
+
+        assert bundle.text.count("read_file path=src/large.py") <= 3
+        assert "line content" not in bundle.text
+        assert bundle.metadata["older_read_file_entries_used"] <= 3
+
+    def test_history_compression_preserves_recent_block_over_older_summary(self):
+        cm = ContextManager(PromptBuilder(), total_budget=2200)
+        history = [
+            {"role": "user", "content": f"older-{i} " + ("x" * 300)}
+            for i in range(20)
+        ]
+        history.extend([
+            {"role": "user", "content": f"recent-critical-{i}"}
+            for i in range(6)
+        ])
+
+        bundle = cm.build(
+            tool_catalog=_sample_catalog(),
+            approval_policy="auto",
+            workspace_root="/tmp/ws",
+            user_message="continue",
+            history=history,
+            session_memory=_empty_memory(),
+        )
+
+        assert "history" in bundle.metadata["sections_truncated"]
+        assert "Recent history:" in bundle.text
+        assert "recent-critical-5" in bundle.text
 
 
 # ---------------------------------------------------------------------------
@@ -506,6 +598,103 @@ class TestContextManagerMetadata:
             session_memory=_empty_memory(),
         )
         assert bundle.metadata["over_budget"] is True
+
+    def test_budget_metadata_reports_original_and_final_section_chars(self):
+        cm = ContextManager(PromptBuilder(), total_budget=1200)
+        sm = SessionMemoryState()
+        sm.set_task_summary("Refactor auth module")
+        sm.remember_file("src/auth.py")
+        sm.record_file_summary("src/auth.py", "auth summary " + ("x" * 400))
+        history = [{"role": "user", "content": "msg " + ("y" * 400)} for _ in range(8)]
+
+        bundle = cm.build(
+            tool_catalog=_sample_catalog(),
+            approval_policy="auto",
+            workspace_root="/tmp/ws",
+            user_message="keep this current request intact",
+            history=history,
+            session_memory=sm,
+        )
+
+        meta = bundle.metadata
+        assert "section_chars_original" in meta
+        assert "section_budgets" in meta
+        assert "section_floors" in meta
+        assert "sections_truncated" in meta
+        assert isinstance(meta["sections_truncated"], list)
+        assert meta["current_request_preserved_rate"] == 1.0
+        assert bundle.text.rstrip().endswith("User request: keep this current request intact")
+
+    def test_current_request_preserved_when_budget_tiny(self):
+        cm = ContextManager(PromptBuilder(), total_budget=500)
+        history = [{"role": "user", "content": "old " + ("x" * 1000)} for _ in range(20)]
+        sm = SessionMemoryState()
+        sm.set_task_summary("summary " + ("y" * 1000))
+        sm.remember_file("src/a.py")
+        sm.record_file_summary("src/a.py", "file summary " + ("z" * 1000))
+
+        request = "this exact current request must be preserved"
+        bundle = cm.build(
+            tool_catalog=_sample_catalog(),
+            approval_policy="auto",
+            workspace_root="/tmp/ws",
+            user_message=request,
+            history=history,
+            session_memory=sm,
+        )
+
+        assert bundle.text.rstrip().endswith("User request: " + request)
+        assert bundle.metadata["current_request_preserved_rate"] == 1.0
+
+    def test_budget_reduces_history_before_memory_sections(self):
+        cm = ContextManager(PromptBuilder(), total_budget=2500)
+        sm = SessionMemoryState()
+        sm.set_task_summary("important working memory")
+        sm.remember_file("src/auth.py")
+        sm.record_file_summary("src/auth.py", "important file summary")
+        history = [{"role": "user", "content": "old " + ("x" * 500)} for _ in range(20)]
+
+        bundle = cm.build(
+            tool_catalog=_sample_catalog(),
+            approval_policy="auto",
+            workspace_root="/tmp/ws",
+            user_message="continue",
+            history=history,
+            session_memory=sm,
+        )
+
+        assert "Working memory:" in bundle.text
+        assert "important working memory" in bundle.text
+        assert "history" in bundle.metadata["sections_truncated"]
+
+    def test_prefix_compaction_keeps_response_contract(self):
+        large_catalog = []
+        for i in range(40):
+            large_catalog.append({
+                "name": f"tool_{i}",
+                "description": "description " + ("x" * 200),
+                "schema": '{"path": "str"}',
+                "requires_approval": False,
+                "read_only": True,
+                "concurrency_safe": True,
+                "max_result_chars": 4000,
+                "allowed": True,
+                "approval_note": "always allowed",
+            })
+        cm = ContextManager(PromptBuilder(), total_budget=1800)
+
+        bundle = cm.build(
+            tool_catalog=large_catalog,
+            approval_policy="auto",
+            workspace_root="/tmp/ws",
+            user_message="continue",
+            history=[],
+            session_memory=_empty_memory(),
+        )
+
+        assert "Respond with exactly one XML block per turn:" in bundle.text
+        assert "Reminder: respond with exactly one <tool> or <final> block." in bundle.text
+        assert bundle.text.rstrip().endswith("User request: continue")
 
 
 # ---------------------------------------------------------------------------

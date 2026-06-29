@@ -7,3 +7,8 @@ __pycache__/
 blog/
 benchmarks/results/
 .env
+docs/
+analysis/
+AGENTS.md
+CLAUDE.md
+SESSION_HANDOFF.md

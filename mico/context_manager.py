@@ -8,18 +8,54 @@ from mico.memory import SessionMemoryState
 MAX_HISTORY_ITEMS = 6
 DEFAULT_TOTAL_BUDGET = 10000
 
+DEFAULT_SECTION_BUDGETS = {
+    "prefix": 2400,
+    "memory_index": 800,
+    "working_memory": 1000,
+    "relevant_memory": 2000,
+    "history": 3800,
+}
+
+DEFAULT_SECTION_FLOORS = {
+    "prefix": 1400,
+    "memory_index": 300,
+    "working_memory": 300,
+    "relevant_memory": 400,
+    "history": 1000,
+}
+
+REDUCTION_ORDER = ("history", "relevant_memory", "working_memory", "memory_index", "prefix")
+RECENT_WINDOW = 6
+RECENT_ITEM_LIMIT = 900
+OLDER_MSG_LIMIT = 80
+OLDER_TOOL_LIMIT = 120
+MAX_OLDER_READ_RANGES_PER_FILE = 3
+MAX_OLDER_READ_FILE_ENTRIES = 12
+
+
+def _clip_with_marker(text, limit):
+    text = str(text or "")
+    if limit is None or limit <= 0 or len(text) <= limit:
+        return text
+    if limit <= 15:
+        return text[:limit]
+    return text[: limit - 15] + "... [truncated]"
+
 
 class ContextManager:
     """Assembles a full prompt from prefix, working memory, episodic notes, history,
     and current request sections.
 
-    Budget v1: tracks over_budget flag only, no compression.
+    Budget v1 uses character-based section compression and reports any
+    remaining over-budget prompt via metadata.
     """
 
     def __init__(self, prompt_builder, total_budget=DEFAULT_TOTAL_BUDGET, section_budgets=None):
         self.prompt_builder = prompt_builder
         self.total_budget = total_budget
-        self.section_budgets = section_budgets or {}
+        self.section_budgets = dict(DEFAULT_SECTION_BUDGETS)
+        self.section_budgets.update(section_budgets or {})
+        self.section_floors = dict(DEFAULT_SECTION_FLOORS)
 
     def build(self, *, tool_catalog, approval_policy, workspace_root,
               user_message, history, session_memory, durable_memory=None):
@@ -64,11 +100,61 @@ class ContextManager:
             relevant_memory_text = ""
 
         # 5. History — always included
-        recent_history = history[-MAX_HISTORY_ITEMS:]
-        history_text = self.prompt_builder.history_text(recent_history)
+        history_text, older_history_used, older_read_file_entries_used = self._history_text(history)
+        history_items_compacted = max(0, len(history) - RECENT_WINDOW)
+        history_items_used = min(len(history), RECENT_WINDOW) + older_history_used
 
         # 6. Current request — always included, always last
         current_request_text = self.prompt_builder.current_request_text(user_message)
+
+        # Capture original section sizes before compression
+        section_chars_original = {
+            "prefix": len(prefix),
+            "memory_index": len(memory_index_text),
+            "working_memory": len(working_memory_text),
+            "relevant_memory": len(relevant_memory_text),
+            "history": len(history_text),
+            "current_request": len(current_request_text),
+        }
+
+        # Section compression
+        section_texts = {
+            "prefix": prefix,
+            "memory_index": memory_index_text,
+            "working_memory": working_memory_text,
+            "relevant_memory": relevant_memory_text,
+            "history": history_text,
+        }
+        sections_truncated = []
+        effective_budgets = self._effective_section_budgets(section_texts, current_request_text)
+
+        # Prefix: use compact prefix instead of blind clipping to preserve protocol
+        prefix_budget = effective_budgets.get("prefix", len(prefix))
+        if len(prefix) > prefix_budget:
+            prefix = self._compact_prefix_text(
+                tool_catalog=tool_catalog,
+                approval_policy=approval_policy,
+                workspace_root=workspace_root,
+                budget=prefix_budget,
+            )
+            section_texts["prefix"] = prefix
+            if "prefix" not in sections_truncated:
+                sections_truncated.append("prefix")
+
+        # Other sections: clip normally
+        for section_name in REDUCTION_ORDER:
+            if section_name == "prefix":
+                continue
+            section_texts[section_name] = self._clip_section(
+                section_name,
+                section_texts[section_name],
+                effective_budgets.get(section_name, len(section_texts[section_name])),
+                sections_truncated,
+            )
+        memory_index_text = section_texts["memory_index"]
+        working_memory_text = section_texts["working_memory"]
+        relevant_memory_text = section_texts["relevant_memory"]
+        history_text = section_texts["history"]
 
         # Concatenate all non-empty sections with newlines
         sections = [prefix, memory_index_text, working_memory_text, relevant_memory_text, history_text, current_request_text]
@@ -79,20 +165,28 @@ class ContextManager:
         tool_count = len(tool_catalog)
         restricted_tool_count = sum(1 for t in tool_catalog if not t["allowed"])
 
+        section_chars = {
+            "prefix": len(prefix),
+            "memory_index": len(memory_index_text),
+            "working_memory": len(working_memory_text),
+            "relevant_memory": len(relevant_memory_text),
+            "history": len(history_text),
+            "current_request": len(current_request_text),
+        }
+
         metadata = {
             "prompt_chars": len(text),
             "total_budget": self.total_budget,
             "over_budget": len(text) > self.total_budget,
-            "section_chars": {
-                "prefix": len(prefix),
-                "memory_index": len(memory_index_text),
-                "working_memory": len(working_memory_text),
-                "relevant_memory": len(relevant_memory_text),
-                "history": len(history_text),
-                "current_request": len(current_request_text),
-            },
+            "section_chars": section_chars,
+            "section_chars_original": section_chars_original,
+            "section_budgets": dict(self.section_budgets),
+            "section_floors": dict(self.section_floors),
+            "sections_truncated": sections_truncated,
+            "history_items_compacted": history_items_compacted,
+            "older_read_file_entries_used": older_read_file_entries_used,
             "history_items_total": len(history),
-            "history_items_used": len(recent_history),
+            "history_items_used": history_items_used,
             "tool_count": tool_count,
             "restricted_tool_count": restricted_tool_count,
             "approval_policy": approval_policy,
@@ -131,3 +225,187 @@ class ContextManager:
 
         scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
         return [note for _, _, note in scored[:limit]]
+
+    def _summarize_tool_history_item(self, item, *, older):
+        name = item.get("name", "unknown_tool")
+        args = item.get("args", {}) or {}
+        meta = item.get("metadata", {}) or {}
+
+        if name == "read_file":
+            path = args.get("path", "?")
+            start = args.get("start")
+            end = args.get("end")
+            range_text = ""
+            if start is not None or end is not None:
+                range_text = " start=" + str(start) + " end=" + str(end)
+            return "read_file path=" + str(path) + range_text
+
+        if name == "write_file":
+            return "write_file path=" + str(args.get("path", "?"))
+
+        if name == "patch_file":
+            return "patch_file path=" + str(args.get("path", "?"))
+
+        if name == "run_command":
+            argv = args.get("argv", [])
+            if isinstance(argv, list):
+                argv_text = " ".join(str(part) for part in argv[:4])
+            else:
+                argv_text = str(argv)
+            status = " exit_code=" + str(meta.get("exit_code")) if "exit_code" in meta else ""
+            if meta.get("timed_out"):
+                status += " timed_out=True"
+            return "run_command argv=" + _clip_with_marker(argv_text, OLDER_TOOL_LIMIT) + status
+
+        return name + " args=" + _clip_with_marker(str(args), OLDER_TOOL_LIMIT)
+
+    def _select_older_history(self, older_history):
+        selected = []
+        read_seen = set()
+        read_counts_by_file = {}
+        read_entries = 0
+
+        for item in older_history:
+            if item.get("role") == "tool" and item.get("name") == "read_file":
+                args = item.get("args", {}) or {}
+                path = str(args.get("path", "?"))
+                key = (path, args.get("start"), args.get("end"))
+                if key in read_seen:
+                    continue
+                if read_counts_by_file.get(path, 0) >= MAX_OLDER_READ_RANGES_PER_FILE:
+                    continue
+                if read_entries >= MAX_OLDER_READ_FILE_ENTRIES:
+                    continue
+                read_seen.add(key)
+                read_counts_by_file[path] = read_counts_by_file.get(path, 0) + 1
+                read_entries += 1
+            selected.append(item)
+        return selected, read_entries
+
+    def _history_text(self, history):
+        if not history:
+            return "Recent history:\n(empty)", 0, 0
+
+        older = history[:-RECENT_WINDOW]
+        recent = history[-RECENT_WINDOW:]
+        selected_older, older_read_file_entries_used = self._select_older_history(older)
+        lines = []
+
+        if selected_older:
+            lines.append("Older history summary:")
+            for item in selected_older:
+                role = item.get("role", "unknown")
+                if role == "tool":
+                    lines.append("- tool: " + self._summarize_tool_history_item(item, older=True))
+                else:
+                    content = _clip_with_marker(item.get("content", ""), OLDER_MSG_LIMIT)
+                    lines.append("- " + role + ": " + content)
+
+        lines.append("Recent history:")
+        if not recent:
+            lines.append("(empty)")
+        for item in recent:
+            role = item.get("role", "unknown")
+            if role == "tool":
+                summary = self._summarize_tool_history_item(item, older=False)
+                content = _clip_with_marker(item.get("content", ""), RECENT_ITEM_LIMIT)
+                if content:
+                    lines.append("Tool result from " + str(item.get("name")) + ": " + summary + " -> " + content)
+                else:
+                    lines.append("Tool result from " + str(item.get("name")) + ": " + summary)
+            else:
+                content = _clip_with_marker(item.get("content", ""), RECENT_ITEM_LIMIT)
+                lines.append(role + ": " + content)
+
+        return "\n".join(lines), len(selected_older), older_read_file_entries_used
+
+    def _clip_section(self, section_name, text, budget, sections_truncated):
+        if not text or len(text) <= budget:
+            return text
+        floor = self.section_floors.get(section_name, 0)
+        limit = max(floor, budget)
+        if section_name == "history":
+            clipped = self._clip_history_section(text, limit)
+        else:
+            clipped = _clip_with_marker(text, limit)
+        if section_name not in sections_truncated:
+            sections_truncated.append(section_name)
+        return clipped
+
+    def _clip_history_section(self, text, limit):
+        marker = "\nRecent history:\n"
+        split_at = text.find(marker)
+        if split_at == -1:
+            return _clip_with_marker(text, limit)
+
+        older_text = text[:split_at]
+        recent_text = text[split_at + 1:]
+        if len(recent_text) >= limit:
+            return self._clip_recent_history_block(recent_text, limit)
+
+        older_limit = limit - len(recent_text) - 1
+        if older_limit <= 0:
+            return recent_text
+        older_clipped = _clip_with_marker(older_text, older_limit)
+        if not older_clipped:
+            return recent_text
+        return older_clipped + "\n" + recent_text
+
+    def _clip_recent_history_block(self, text, limit):
+        header = "Recent history:\n"
+        if len(text) <= limit:
+            return text
+        if not text.startswith(header):
+            return _clip_with_marker(text, limit)
+        marker = "... [truncated]\n"
+        body_limit = limit - len(header) - len(marker)
+        if body_limit <= 0:
+            return _clip_with_marker(text, limit)
+        return header + marker + text[-body_limit:]
+
+    def _effective_section_budgets(self, section_texts, current_request_text):
+        budgets = dict(self.section_budgets)
+        fixed_total = len(current_request_text)
+        total = fixed_total + sum(len(section_texts.get(name, "")) for name in budgets)
+        overflow = max(0, total - self.total_budget)
+
+        for name in REDUCTION_ORDER:
+            if overflow <= 0:
+                break
+            current_len = len(section_texts.get(name, ""))
+            floor = self.section_floors.get(name, 0)
+            current_budget = min(budgets.get(name, current_len), current_len)
+            reducible = max(0, current_budget - floor)
+            reduction = min(reducible, overflow)
+            budgets[name] = current_budget - reduction
+            overflow -= reduction
+
+        return budgets
+
+    def _compact_prefix_text(self, *, tool_catalog, approval_policy, workspace_root, budget):
+        pb = self.prompt_builder
+        compact_catalog = []
+        for item in tool_catalog:
+            compact_catalog.append({
+                **item,
+                "description": _clip_with_marker(item.get("description", ""), 60),
+                "schema": _clip_with_marker(item.get("schema", ""), 80),
+            })
+        text = pb.prefix_text(
+            tool_catalog=compact_catalog,
+            approval_policy=approval_policy,
+            workspace_root=workspace_root,
+        )
+        if len(text) <= budget:
+            return text
+        required = (
+            pb._static_prefix() + "\n" +
+            pb._response_contract() + "\n\n" +
+            pb._runtime_policy(approval_policy) + "\n" +
+            "Available tools:\n" +
+            "\n".join("- " + item["name"] for item in compact_catalog) + "\n\n" +
+            pb._system_context() + "\n" +
+            pb._workspace_context(workspace_root) + "\n" +
+            pb._format_reminder()
+        )
+        return required
