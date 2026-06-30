@@ -36,8 +36,11 @@ class AgentLoop:
     def run(self, user_message):
         agent = self.agent
         started_at = time.monotonic()
+        # 1. 创建任务状态（生成唯一 run_id），任务状态覆盖更新，只关注一次run的最新状态
         task_state = TaskState.create(user_message)
+        # 2. 创建运行目录 .mico/runs/<run_id>/
         agent.run_store.start_run(task_state)
+        # 3. 记录用户消息到 history
         agent.record({"role": "user", "content": user_message, "created_at": now()})
         agent._last_run_history_start = len(agent.history)
         agent.emit_trace(
@@ -48,7 +51,7 @@ class AgentLoop:
                 "approval_policy": agent.approval_policy,
                 "tool_summary": agent.tool_executor.tool_summary(),
             },
-        )
+        )    # trace.jsonl │ 追加     │ 记录完整执行历史
         agent.emit_ui_event("run_started", {
             "run_id": task_state.run_id,
             "run_dir": str(agent.run_store.run_dir(task_state)),
@@ -89,6 +92,7 @@ class AgentLoop:
                 return final
             parsed = agent.parse_output(raw)
             kind, payload, error_kind = parsed.kind, parsed.payload, parsed.error_kind
+            # kind = retry表示本地解析失败
             if kind == "retry" and error_kind == "unknown_block":
                 plain_final = _plain_text_final_after_successful_write(raw, agent.history)
                 if plain_final is not None:
@@ -110,7 +114,7 @@ class AgentLoop:
                     "args": _summarize_tool_args(name, args),
                 })
                 t0 = time.monotonic()
-                result = agent.execute_tool(name, args)
+                result = agent.execute_tool(name, args)  # 工具执行后，调用self._after_tool_result(name, args, result)保存memory信息
                 duration_ms = int((time.monotonic() - t0) * 1000)
                 task_state.record_tool(name)
                 spec = TOOL_SPECS.get(name)

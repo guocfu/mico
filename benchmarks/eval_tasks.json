@@ -1,0 +1,88 @@
+[
+  {
+    "name": "context_long_history_python",
+    "group": "context_compression",
+    "user_message": "根据当前请求回答，不要裁剪这句话。",
+    "history_items": 30,
+    "history_payload_chars": 260
+  },
+  {
+    "name": "context_many_read_ranges",
+    "group": "context_compression",
+    "user_message": "总结最新目标。",
+    "history_items": 24,
+    "history_payload_chars": 180,
+    "read_file_ranges": 12,
+    "read_result_chars": 520
+  },
+  {
+    "name": "context_memory_heavy",
+    "group": "context_compression",
+    "user_message": "继续实现功能。",
+    "memory_notes": 12,
+    "memory_note_chars": 220,
+    "file_summaries": 8,
+    "file_summary_chars": 220,
+    "history_items": 18,
+    "history_payload_chars": 200
+  },
+  {
+    "name": "context_checkpoint_heavy",
+    "group": "context_compression",
+    "user_message": "从 checkpoint 继续。",
+    "checkpoint_chars": 2400,
+    "history_items": 16,
+    "history_payload_chars": 220
+  },
+  {
+    "name": "memory_followup_auth",
+    "group": "memory_reuse",
+    "path": "src/auth.py",
+    "content": "def login(user):\n    return user == \"admin\"\n",
+    "summary_token": "def login(user):"
+  },
+  {
+    "name": "memory_followup_config",
+    "group": "memory_reuse",
+    "path": "config/app.py",
+    "content": "TIMEOUT = 30\nRETRIES = 2\n",
+    "summary_token": "TIMEOUT = 30"
+  },
+  {
+    "name": "memory_followup_tests",
+    "group": "memory_reuse",
+    "path": "tests/test_api.py",
+    "content": "def test_health():\n    assert True\n",
+    "summary_token": "def test_health():"
+  },
+  {
+    "name": "memory_followup_model",
+    "group": "memory_reuse",
+    "path": "src/model.py",
+    "content": "class User:\n    pass\n",
+    "summary_token": "class User:"
+  },
+  {
+    "name": "resume_full_valid",
+    "group": "checkpoint_resume",
+    "expected_resume_status": "full-valid"
+  },
+  {
+    "name": "resume_partial_stale",
+    "group": "checkpoint_resume",
+    "mutation": "change_key_file",
+    "expected_resume_status": "partial-stale"
+  },
+  {
+    "name": "resume_workspace_mismatch",
+    "group": "checkpoint_resume",
+    "mutation": "approval_policy",
+    "expected_resume_status": "workspace-mismatch"
+  },
+  {
+    "name": "resume_schema_mismatch",
+    "group": "checkpoint_resume",
+    "mutation": "schema_version",
+    "expected_resume_status": "schema-mismatch"
+  }
+]

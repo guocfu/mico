@@ -207,24 +207,25 @@ class Mico:
         checkpoint_text = ""
         resume_state = None
         if self.resume_requested:
+            # 如果用户请求恢复之前的会话
             if self.resume_state is None:
                 from .checkpoint import evaluate_resume_state
-                self.resume_state = evaluate_resume_state(self)
+                self.resume_state = evaluate_resume_state(self) # 评估恢复状态
             resume_state = self.resume_state
             from .checkpoint import render_checkpoint_text
-            checkpoint_text = render_checkpoint_text(self)
+            checkpoint_text = render_checkpoint_text(self)  # 渲染检查点文本
 
         bundle = self._context_manager.build(
-            tool_catalog=self.tool_executor.tool_catalog(),
-            approval_policy=self.approval_policy,
-            workspace_root=str(self.workspace.root),
-            user_message=user_message,
-            history=self.history[self._last_run_history_start:],
-            session_memory=self.session_memory,
-            durable_memory=self.durable_memory,
-            checkpoint_text=checkpoint_text,
-            resume_state=resume_state,
-        )
+            tool_catalog=self.tool_executor.tool_catalog(),  # 可用工具列表
+            approval_policy=self.approval_policy,             # 授权策略
+            workspace_root=str(self.workspace.root),          # 工作目录路径
+            user_message=user_message,                         # 用户当前请求
+            history=self.history[self._last_run_history_start:],  # 本次运行的历史
+            session_memory=self.session_memory,               # Working Memory + EpisodicNotes
+            durable_memory=self.durable_memory,               # 跨 session 持久记忆
+            checkpoint_text=checkpoint_text,                   # 检查点文本（恢复时）
+            resume_state=resume_state,                         # 恢复状态（恢复时）
+        )        
         self._last_prompt_metadata = bundle.metadata
         return bundle
 
