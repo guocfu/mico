@@ -124,7 +124,7 @@ def test_approval_choices_include_ask():
 
 def test_session_id_default():
     args = _parse("hello")
-    assert args.session_id == "default"
+    assert args.session_id is None
 
 
 def test_session_id_custom():
@@ -199,3 +199,29 @@ def test_invalid_resume_id_exits_cleanly(tmp_path):
         assert False, 'Expected SystemExit'
     except SystemExit:
         pass
+
+# --- generate_session_id ---
+
+
+def test_generate_session_id_format():
+    from mico.cli import generate_session_id
+    sid = generate_session_id()
+    assert sid.startswith('s-')
+    parts = sid.split('-')
+    assert len(parts) == 4
+    assert len(parts[1]) == 8
+    assert len(parts[2]) == 6
+    assert len(parts[3]) == 6
+
+
+def test_generate_session_id_passes_validation():
+    from mico.cli import generate_session_id
+    from mico.session_store import SessionStore
+    sid = generate_session_id()
+    SessionStore.validate_session_id(sid)
+
+
+def test_generate_session_ids_are_unique():
+    from mico.cli import generate_session_id
+    ids = {generate_session_id() for _ in range(50)}
+    assert len(ids) == 50

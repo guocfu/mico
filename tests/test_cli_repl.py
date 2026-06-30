@@ -427,3 +427,118 @@ def test_one_shot_does_not_print_progress(monkeypatch, capsys):
     assert "thinking" not in captured.out
     assert "read_file" not in captured.out
     assert "echo: hello" in captured.out
+
+# --- REPL auto-generated session id ---
+
+
+def test_repl_auto_generates_session_id(monkeypatch, capsys):
+    """REPL mode without --session-id auto-generates a unique session id."""
+    captured_args = []
+
+    def _capture_build(args, approval_callback=None, event_callback=None):
+        captured_args.append(args)
+        return FakeAgent(session_id=args.session_id if args.session_id else "default")
+
+    monkeypatch.setattr("mico.cli.build_agent", _capture_build)
+    monkeypatch.setattr("mico.cli.print_banner", lambda **kwargs: None)
+    monkeypatch.setattr("builtins.input", _make_input_side_effect([EOFError()]))
+
+    main([])
+
+    assert len(captured_args) == 1
+    session_id = captured_args[0].session_id
+    assert session_id is not None
+    assert session_id != "default"
+    assert session_id.startswith("s-")
+    parts = session_id.split("-")
+    assert len(parts) == 4
+
+
+def test_repl_explicit_session_id_not_overridden(monkeypatch, capsys):
+    """REPL mode with --session-id keeps the explicit value."""
+    captured_args = []
+
+    def _capture_build(args, approval_callback=None, event_callback=None):
+        captured_args.append(args)
+        return FakeAgent(session_id=args.session_id)
+
+    monkeypatch.setattr("mico.cli.build_agent", _capture_build)
+    monkeypatch.setattr("mico.cli.print_banner", lambda **kwargs: None)
+    monkeypatch.setattr("builtins.input", _make_input_side_effect([EOFError()]))
+
+    main(["--session-id", "myproject"])
+
+    assert len(captured_args) == 1
+    assert captured_args[0].session_id == "myproject"
+
+
+def test_repl_resume_not_overridden(monkeypatch, capsys):
+    """REPL mode with --resume does not auto-generate session id."""
+    captured_args = []
+
+    def _capture_build(args, approval_callback=None, event_callback=None):
+        captured_args.append(args)
+        return FakeAgent(session_id="resumed-session", resume_requested=True)
+
+    monkeypatch.setattr("mico.cli.build_agent", _capture_build)
+    monkeypatch.setattr("mico.cli.print_banner", lambda **kwargs: None)
+    monkeypatch.setattr("builtins.input", _make_input_side_effect([EOFError()]))
+
+    main(["--resume", "old-session"])
+
+    assert len(captured_args) == 1
+    assert captured_args[0].resume == "old-session"
+
+# --- REPL startup resume-with display ---
+
+
+def test_repl_startup_shows_resume_with(monkeypatch, capsys):
+    """REPL startup shows 'mico: resume with: mico --resume <id>'."""
+    fake = FakeAgent(session_id="s-20260630-120000-ab12cd")
+    _patch_build_agent(monkeypatch, fake)
+    monkeypatch.setattr("mico.cli.print_banner", lambda **kwargs: None)
+    monkeypatch.setattr("builtins.input", _make_input_side_effect([EOFError()]))
+
+    main(["--session-id", "s-20260630-120000-ab12cd"])
+
+    captured = capsys.readouterr()
+    assert "mico: resume with: mico --resume s-20260630-120000-ab12cd" in captured.out
+
+
+def test_repl_startup_resume_mode_shows_resume_with(monkeypatch, capsys):
+    """REPL resume mode startup shows 'mico --resume <id>'."""
+    fake = FakeAgent(session_id="old-session", resume_requested=True)
+    _patch_build_agent(monkeypatch, fake)
+    monkeypatch.setattr("mico.cli.print_banner", lambda **kwargs: None)
+    monkeypatch.setattr("builtins.input", _make_input_side_effect([EOFError()]))
+
+    main(["--resume", "old-session"])
+
+    captured = capsys.readouterr()
+    assert "mico: resume with: mico --resume old-session" in captured.out
+
+
+def test_repl_eof_exit_shows_resume_with(monkeypatch, capsys):
+    """REPL EOF exit shows 'mico: resume with: mico --resume <id>'."""
+    fake = FakeAgent(session_id="my-session")
+    _patch_build_agent(monkeypatch, fake)
+    monkeypatch.setattr("mico.cli.print_banner", lambda **kwargs: None)
+    monkeypatch.setattr("builtins.input", _make_input_side_effect([EOFError()]))
+
+    main(["--session-id", "my-session"])
+
+    captured = capsys.readouterr()
+    assert "mico: resume with: mico --resume my-session" in captured.out
+
+
+def test_repl_ctrl_c_exit_shows_resume_with(monkeypatch, capsys):
+    """REPL Ctrl+C exit shows 'mico: resume with: mico --resume <id>'."""
+    fake = FakeAgent(session_id="my-session")
+    _patch_build_agent(monkeypatch, fake)
+    monkeypatch.setattr("mico.cli.print_banner", lambda **kwargs: None)
+    monkeypatch.setattr("builtins.input", _make_input_side_effect([KeyboardInterrupt()]))
+
+    main(["--session-id", "my-session"])
+
+    captured = capsys.readouterr()
+    assert "mico: resume with: mico --resume my-session" in captured.out

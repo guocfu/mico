@@ -1,5 +1,7 @@
 import argparse
+import datetime
 import os
+import secrets
 import sys
 from pathlib import Path
 
@@ -10,6 +12,11 @@ from .runtime import Mico
 from .state import RunStore
 from .verification import run_verification, write_verification_json
 from .workspace import Workspace, clip, clip_artifact
+
+
+def generate_session_id():
+    now = datetime.datetime.now()
+    return f"s-{now.strftime('%Y%m%d')}-{now.strftime('%H%M%S')}-{secrets.token_hex(3)}"
 
 
 def build_arg_parser():
@@ -58,8 +65,8 @@ def build_arg_parser():
     )
     parser.add_argument(
         "--session-id",
-        default="default",
-        help="Session id to use (default: default).",
+        default=None,
+        help="Session id to use. Auto-generated for REPL if not specified.",
     )
     parser.add_argument(
         "--resume",
@@ -224,7 +231,7 @@ def build_agent(args, approval_callback=None, event_callback=None):
     from .session_store import SessionStore
     session_store = SessionStore(workspace.root / ".mico" / "sessions")
     resume_requested = False
-    session_id = args.session_id
+    session_id = args.session_id if args.session_id is not None else "default"
 
     if args.resume is not None:
         resume_requested = True
@@ -298,6 +305,13 @@ def build_console_renderer():
     return _render
 
 
+def _print_resume_hint(config):
+    if config:
+        session_id = config.get("session_id")
+        if session_id:
+            print(f"mico: resume with: mico --resume {session_id}")
+
+
 def run_repl(agent, config=None):
     if config:
         print_banner(
@@ -311,6 +325,7 @@ def run_repl(agent, config=None):
         if session_id:
             suffix = " (resume)" if config.get("resume_requested") else ""
             print(f"mico: session {session_id}{suffix}")
+            print(f"mico: resume with: mico --resume {session_id}")
     else:
         print("mico interactive mode (Ctrl+C or Ctrl+D to exit)")
     try:
@@ -318,14 +333,16 @@ def run_repl(agent, config=None):
             try:
                 user_input = input("mico> ").strip()
             except EOFError:
-                print("\nBye.")
+                _print_resume_hint(config)
+                print("Bye.")
                 return 0
             if not user_input:
                 continue
             final_answer = agent.ask(user_input)
             print(final_answer)
     except KeyboardInterrupt:
-        print("\nBye.")
+        _print_resume_hint(config)
+        print("Bye.")
         return 0
 
 
@@ -340,6 +357,8 @@ def main(argv=None):
     if not prompt:
         if args.verify_cmd:
             raise SystemExit("--verify-cmd is only supported in one-shot mode")
+        if args.session_id is None and args.resume is None:
+            args.session_id = generate_session_id()
         renderer = build_console_renderer() if interactive else None
         agent = build_agent(args, approval_callback=approval_cb, event_callback=renderer)
         config = {
