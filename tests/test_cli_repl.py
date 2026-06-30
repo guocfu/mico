@@ -4,8 +4,10 @@ from mico.cli import main
 
 
 class FakeAgent:
-    def __init__(self):
+    def __init__(self, session_id="default", resume_requested=False):
         self.ask_calls = []
+        self.session_id = session_id
+        self.resume_requested = resume_requested
 
     def ask(self, message):
         self.ask_calls.append(message)
@@ -73,6 +75,30 @@ def test_repl_eof_exits_zero(monkeypatch, capsys):
     assert result == 0
     captured = capsys.readouterr()
     assert "Bye" in captured.out
+
+
+def test_repl_startup_shows_session_id(monkeypatch, capsys):
+    fake = FakeAgent(session_id="project-a")
+    _patch_build_agent(monkeypatch, fake)
+    monkeypatch.setattr("builtins.input", _make_input_side_effect([EOFError()]))
+
+    result = main(["--session-id", "project-a"])
+
+    assert result == 0
+    captured = capsys.readouterr()
+    assert "mico: session project-a" in captured.out
+
+
+def test_repl_startup_shows_resume_session(monkeypatch, capsys):
+    fake = FakeAgent(session_id="latest-real", resume_requested=True)
+    _patch_build_agent(monkeypatch, fake)
+    monkeypatch.setattr("builtins.input", _make_input_side_effect([EOFError()]))
+
+    result = main(["--resume", "latest"])
+
+    assert result == 0
+    captured = capsys.readouterr()
+    assert "mico: session latest-real (resume)" in captured.out
 
 
 def test_repl_keyboard_interrupt_exits_zero(monkeypatch, capsys):

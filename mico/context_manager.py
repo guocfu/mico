@@ -11,6 +11,7 @@ DEFAULT_TOTAL_BUDGET = 10000
 DEFAULT_SECTION_BUDGETS = {
     "prefix": 2400,
     "memory_index": 800,
+    "checkpoint": 1200,
     "working_memory": 1000,
     "relevant_memory": 2000,
     "history": 3800,
@@ -19,12 +20,13 @@ DEFAULT_SECTION_BUDGETS = {
 DEFAULT_SECTION_FLOORS = {
     "prefix": 1400,
     "memory_index": 300,
+    "checkpoint": 200,
     "working_memory": 300,
     "relevant_memory": 400,
     "history": 1000,
 }
 
-REDUCTION_ORDER = ("history", "relevant_memory", "working_memory", "memory_index", "prefix")
+REDUCTION_ORDER = ("history", "relevant_memory", "working_memory", "checkpoint", "memory_index", "prefix")
 RECENT_WINDOW = 6
 RECENT_ITEM_LIMIT = 900
 OLDER_MSG_LIMIT = 80
@@ -58,7 +60,8 @@ class ContextManager:
         self.section_floors = dict(DEFAULT_SECTION_FLOORS)
 
     def build(self, *, tool_catalog, approval_policy, workspace_root,
-              user_message, history, session_memory, durable_memory=None):
+              user_message, history, session_memory, durable_memory=None,
+              checkpoint_text="", resume_state=None):
         """Assemble all prompt sections and return a PromptBundle with metadata."""
         # 1. Prefix — always included
         prefix = self.prompt_builder.prefix_text(
@@ -77,13 +80,16 @@ class ContextManager:
             if hasattr(durable_memory, "count_notes"):
                 durable_notes_available = durable_memory.count_notes()
 
-        # 3. Working memory — only if task_summary or recent_files present
+        # 3. Checkpoint — only when resume is requested
+        checkpoint_section = checkpoint_text if checkpoint_text else ""
+
+        # 4. Working memory — only if task_summary or recent_files present
         if session_memory.task_summary or session_memory.recent_files:
             working_memory_text = "Working memory:\n" + session_memory.render_memory_text()
         else:
             working_memory_text = ""
 
-        # 4. Relevant memory — episodic notes plus matching durable notes
+        # 5. Relevant memory — episodic notes plus matching durable notes
         retrieved_notes = self._retrieve_episodic_notes(session_memory, user_message, limit=3)
         durable_notes = []
         if durable_memory is not None:
@@ -111,6 +117,7 @@ class ContextManager:
         section_chars_original = {
             "prefix": len(prefix),
             "memory_index": len(memory_index_text),
+            "checkpoint": len(checkpoint_section),
             "working_memory": len(working_memory_text),
             "relevant_memory": len(relevant_memory_text),
             "history": len(history_text),
@@ -121,6 +128,7 @@ class ContextManager:
         section_texts = {
             "prefix": prefix,
             "memory_index": memory_index_text,
+            "checkpoint": checkpoint_section,
             "working_memory": working_memory_text,
             "relevant_memory": relevant_memory_text,
             "history": history_text,
@@ -152,12 +160,13 @@ class ContextManager:
                 sections_truncated,
             )
         memory_index_text = section_texts["memory_index"]
+        checkpoint_section = section_texts["checkpoint"]
         working_memory_text = section_texts["working_memory"]
         relevant_memory_text = section_texts["relevant_memory"]
         history_text = section_texts["history"]
 
         # Concatenate all non-empty sections with newlines
-        sections = [prefix, memory_index_text, working_memory_text, relevant_memory_text, history_text, current_request_text]
+        sections = [prefix, memory_index_text, checkpoint_section, working_memory_text, relevant_memory_text, history_text, current_request_text]
         non_empty = [s for s in sections if s]
         text = "\n".join(non_empty) + "\n"
 
@@ -168,11 +177,21 @@ class ContextManager:
         section_chars = {
             "prefix": len(prefix),
             "memory_index": len(memory_index_text),
+            "checkpoint": len(checkpoint_section),
             "working_memory": len(working_memory_text),
             "relevant_memory": len(relevant_memory_text),
             "history": len(history_text),
             "current_request": len(current_request_text),
         }
+
+        # Checkpoint metadata
+        resume_status = "no-checkpoint"
+        stale_paths = []
+        runtime_identity_mismatch_fields = []
+        if resume_state is not None:
+            resume_status = resume_state.get("status", "no-checkpoint")
+            stale_paths = resume_state.get("stale_paths", [])
+            runtime_identity_mismatch_fields = resume_state.get("runtime_identity_mismatch_fields", [])
 
         metadata = {
             "prompt_chars": len(text),
@@ -197,6 +216,10 @@ class ContextManager:
             "durable_memory_notes_truncated": sum(1 for note in durable_notes if note.get("truncated")),
             "current_request_chars": len(user_message),
             "current_request_preserved_rate": 1.0,
+            "resume_status": resume_status,
+            "checkpoint_chars": len(checkpoint_section),
+            "stale_paths": stale_paths,
+            "runtime_identity_mismatch_fields": runtime_identity_mismatch_fields,
         }
 
         return PromptBundle(text=text, metadata=metadata)

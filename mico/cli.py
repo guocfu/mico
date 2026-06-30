@@ -56,6 +56,16 @@ def build_arg_parser():
         default=120,
         help="Timeout in seconds for the verification command (default: 120).",
     )
+    parser.add_argument(
+        "--session-id",
+        default="default",
+        help="Session id to use (default: default).",
+    )
+    parser.add_argument(
+        "--resume",
+        default=None,
+        help="Session id to resume, or 'latest'.",
+    )
     return parser
 
 
@@ -209,6 +219,26 @@ def build_agent(args, approval_callback=None, event_callback=None):
             raise SystemExit(str(exc)) from None
     else:
         raise SystemExit(f"unknown provider: {provider}")
+
+    # Resolve session_id and resume_requested
+    from .session_store import SessionStore
+    session_store = SessionStore(workspace.root / ".mico" / "sessions")
+    resume_requested = False
+    session_id = args.session_id
+
+    if args.resume is not None:
+        resume_requested = True
+        if args.resume == "latest":
+            latest = session_store.latest_id()
+            session_id = latest if latest is not None else "default"
+        else:
+            session_id = args.resume
+
+    try:
+        session_store.validate_session_id(session_id)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from None
+
     return Mico(
         model_client=model_client,
         workspace=workspace,
@@ -217,6 +247,9 @@ def build_agent(args, approval_callback=None, event_callback=None):
         max_steps=args.max_steps,
         approval_callback=approval_callback,
         event_callback=event_callback,
+        session_store=session_store,
+        session_id=session_id,
+        resume_requested=resume_requested,
     )
 
 
@@ -274,6 +307,10 @@ def run_repl(agent, config=None):
             approval=config.get("approval", "auto"),
             max_steps=config.get("max_steps", 8),
         )
+        session_id = config.get("session_id")
+        if session_id:
+            suffix = " (resume)" if config.get("resume_requested") else ""
+            print(f"mico: session {session_id}{suffix}")
     else:
         print("mico interactive mode (Ctrl+C or Ctrl+D to exit)")
     try:
@@ -311,6 +348,8 @@ def main(argv=None):
             "provider": args.provider or "auto",
             "approval": args.approval,
             "max_steps": args.max_steps,
+            "session_id": getattr(agent, "session_id", args.session_id),
+            "resume_requested": getattr(agent, "resume_requested", False),
         }
         return run_repl(agent, config=config)
     agent = build_agent(args, approval_callback=approval_cb)

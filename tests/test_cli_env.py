@@ -117,3 +117,85 @@ def test_approval_choices_include_ask():
     args = _parse("hello")
     # Should not raise; "ask" is a valid choice
     assert args.approval in ("auto", "ask", "never")
+
+
+# --- Task 5: CLI resume and session ID ---
+
+
+def test_session_id_default():
+    args = _parse("hello")
+    assert args.session_id == "default"
+
+
+def test_session_id_custom():
+    args = _parse("hello --session-id custom")
+    assert args.session_id == "custom"
+
+
+def test_resume_custom():
+    args = _parse("hello --resume custom")
+    assert args.resume == "custom"
+
+
+def test_resume_latest():
+    args = _parse("hello --resume latest")
+    assert args.resume == "latest"
+
+
+def test_build_agent_with_session_id(tmp_path):
+    args = _parse(f"--cwd {tmp_path} --session-id mysession hello")
+    agent = build_agent(args)
+    assert agent.session_id == "mysession"
+    assert agent.resume_requested is False
+
+
+def test_build_agent_with_resume(tmp_path):
+    args = _parse(f"--cwd {tmp_path} --resume mysession hello")
+    agent = build_agent(args)
+    assert agent.session_id == "mysession"
+    assert agent.resume_requested is True
+
+
+def test_build_agent_resume_latest_with_sessions(tmp_path):
+    """--resume latest uses the most recently modified session."""
+    import time
+    from mico.session_store import SessionStore
+
+    ss = SessionStore(tmp_path / ".mico" / "sessions")
+    ss.save("older", {"session_id": "older", "memory": {}})
+    time.sleep(0.05)
+    ss.save("newer", {"session_id": "newer", "memory": {}})
+
+    args = _parse(f"--cwd {tmp_path} --resume latest hello")
+    agent = build_agent(args)
+    assert agent.session_id == "newer"
+    assert agent.resume_requested is True
+
+
+def test_build_agent_resume_latest_no_sessions(tmp_path):
+    """--resume latest with no sessions falls back to 'default'."""
+    args = _parse(f"--cwd {tmp_path} --resume latest hello")
+    agent = build_agent(args)
+    assert agent.session_id == "default"
+    assert agent.resume_requested is True
+
+
+
+def test_invalid_session_id_exits_cleanly(tmp_path):
+    from mico.session_store import SessionStore
+    args = _parse(f'--cwd {tmp_path} --session-id ../escape hello')
+    try:
+        build_agent(args)
+        assert False, 'Expected SystemExit'
+    except SystemExit:
+        pass
+
+
+def test_invalid_resume_id_exits_cleanly(tmp_path):
+    from mico.session_store import SessionStore
+    args = _parse(f'--cwd {tmp_path} --resume ../escape hello')
+    try:
+        build_agent(args)
+        assert False, 'Expected SystemExit'
+    except SystemExit:
+        pass

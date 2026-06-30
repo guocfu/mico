@@ -1,4 +1,5 @@
 from .agent_loop import AgentLoop
+from .checkpoint import CHECKPOINT_NONE_STATUS, create_checkpoint, ensure_checkpoint_shape
 from .context_manager import ContextManager
 from .memory import SessionMemoryState, summarize_read_result
 from .memory_store import DurableMemory
@@ -10,7 +11,7 @@ from .tool_executor import ToolExecutor
 
 
 class Mico:
-    def __init__(self, model_client, workspace, run_store, approval_policy="auto", max_steps=4, approval_callback=None, event_callback=None, session_store=None, session_id="default"):
+    def __init__(self, model_client, workspace, run_store, approval_policy="auto", max_steps=4, approval_callback=None, event_callback=None, session_store=None, session_id="default", resume_requested=False):
         self.model_client = model_client
         self.workspace = workspace
         self.run_store = run_store
@@ -36,7 +37,10 @@ class Mico:
         if session_store is None:
             session_store = SessionStore(workspace.root / ".mico" / "sessions")
         self.session_store = session_store
-        self.session_memory = self._load_session_memory()
+        self.session = self._load_session()
+        self.session_memory = SessionMemoryState.from_dict(self.session.get("memory"))
+        self.resume_requested = resume_requested
+        self.resume_state = None
 
     def _execute_remember(self, args):
         import json
@@ -60,18 +64,18 @@ class Mico:
             "created_at": result["created_at"],
         }, ensure_ascii=False)
 
-    def _load_session_memory(self):
+    def _load_session(self):
         data = self.session_store.load(self.session_id)
-        if data is not None:
-            return SessionMemoryState.from_dict(data.get("memory"))
-        return SessionMemoryState()
+        if data is None:
+            data = {"session_id": self.session_id}
+        ensure_checkpoint_shape(data)
+        return data
 
-    def _save_session_memory(self):
-        data = {
-            "session_id": self.session_id,
-            "memory": self.session_memory.to_dict(),
-        }
-        self.session_store.save(self.session_id, data)
+    def _save_session(self):
+        self.session["session_id"] = self.session_id
+        self.session["memory"] = self.session_memory.to_dict()
+        ensure_checkpoint_shape(self.session)
+        self.session_store.save(self.session_id, self.session)
 
     def _after_tool_result(self, name, args, result):
         import hashlib
@@ -132,8 +136,44 @@ class Mico:
         self._last_parser_error_kind = None
         self.session_memory.set_task_summary(user_message)
         result = AgentLoop(self).run(user_message)
-        self._save_session_memory()
+        self._create_post_run_checkpoint(user_message)
+        if self._last_task_state is not None:
+            self.run_store.write_task_state(self._last_task_state)
+        self._save_session()
         return result
+
+    def _create_post_run_checkpoint(self, user_message):
+        task_state = self._last_task_state
+        if task_state is None:
+            return
+        # Determine trigger
+        meta = self._last_prompt_metadata or {}
+        sections_truncated = meta.get("sections_truncated", [])
+        if sections_truncated:
+            trigger = "context_reduction"
+        elif task_state.stop_reason == "step_limit":
+            trigger = "step_limit"
+        elif task_state.stop_reason == "model_error":
+            trigger = "model_error"
+        else:
+            trigger = "final"
+
+        if self.resume_state is None:
+            task_state.resume_status = CHECKPOINT_NONE_STATUS
+        else:
+            task_state.resume_status = self.resume_state.get("status", CHECKPOINT_NONE_STATUS)
+        cp = create_checkpoint(self, task_state, user_message, trigger)
+        task_state.checkpoint_id = cp["checkpoint_id"]
+
+        # Emit trace event with safe fields only
+        self.emit_trace(task_state, "checkpoint_created", {
+            "checkpoint_id": cp["checkpoint_id"],
+            "trigger": trigger,
+            "key_file_count": len(cp.get("key_files", {})),
+        })
+
+        # Update report with checkpoint fields
+        self.run_store.write_report(task_state, self.build_report(task_state))
 
     def record(self, item):
         self.history.append(dict(item))
@@ -164,6 +204,16 @@ class Mico:
         return self.build_prompt_bundle(user_message).text
 
     def build_prompt_bundle(self, user_message):
+        checkpoint_text = ""
+        resume_state = None
+        if self.resume_requested:
+            if self.resume_state is None:
+                from .checkpoint import evaluate_resume_state
+                self.resume_state = evaluate_resume_state(self)
+            resume_state = self.resume_state
+            from .checkpoint import render_checkpoint_text
+            checkpoint_text = render_checkpoint_text(self)
+
         bundle = self._context_manager.build(
             tool_catalog=self.tool_executor.tool_catalog(),
             approval_policy=self.approval_policy,
@@ -172,6 +222,8 @@ class Mico:
             history=self.history[self._last_run_history_start:],
             session_memory=self.session_memory,
             durable_memory=self.durable_memory,
+            checkpoint_text=checkpoint_text,
+            resume_state=resume_state,
         )
         self._last_prompt_metadata = bundle.metadata
         return bundle
@@ -245,6 +297,12 @@ class Mico:
             report["prompt_metadata"] = self._last_prompt_metadata
         if self._last_parser_error_kind is not None:
             report["parser_error_kind"] = self._last_parser_error_kind
+        # Checkpoint fields
+        report["checkpoint_id"] = task_state.checkpoint_id
+        resume_state = getattr(self, "resume_state", None) or {}
+        report["resume_status"] = resume_state.get("status", "no-checkpoint")
+        report["stale_paths"] = resume_state.get("stale_paths", [])
+        report["runtime_identity_mismatch_fields"] = resume_state.get("runtime_identity_mismatch_fields", [])
         if verification_result is not None:
             report["verification_ok"] = verification_result.ok
             report["verification_exit_code"] = verification_result.exit_code

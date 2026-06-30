@@ -21,6 +21,8 @@ class TaskState:
     stop_reason: str = ""
     created_at: str = field(default_factory=now)
     updated_at: str = field(default_factory=now)
+    checkpoint_id: str = ""
+    resume_status: str = ""
 
     @classmethod
     def create(cls, user_message):

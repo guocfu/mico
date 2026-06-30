@@ -167,3 +167,108 @@ def test_load_io_error_sets_last_error(tmp_path, monkeypatch):
     result = store.load("default")
     assert result is None
     assert store.last_error == "io_error"
+
+
+# --- Task 5: SessionStore.latest_id ---
+
+
+def test_latest_id_returns_none_when_empty(tmp_path):
+    store = SessionStore(tmp_path / "sessions")
+    assert store.latest_id() is None
+
+
+def test_latest_id_returns_most_recent(tmp_path):
+    import time
+    store = SessionStore(tmp_path / "sessions")
+    store.save("first", {"session_id": "first", "memory": {}})
+    time.sleep(0.05)
+    store.save("second", {"session_id": "second", "memory": {}})
+    assert store.latest_id() == "second"
+
+
+def test_latest_id_considers_mtime(tmp_path):
+    import time
+    import os
+    store = SessionStore(tmp_path / "sessions")
+    store.save("old", {"session_id": "old", "memory": {}})
+    time.sleep(0.1)
+    store.save("new", {"session_id": "new", "memory": {}})
+    # Force old.json to have a newer mtime using os.utime
+    old_path = str(tmp_path / "sessions" / "old.json")
+    new_time = time.time() + 10
+    os.utime(old_path, (new_time, new_time))
+    assert store.latest_id() == "old"
+
+
+
+def test_save_rejects_empty_session_id(tmp_path):
+    store = SessionStore(tmp_path / 'sessions')
+    try:
+        store.save('', {'session_id': ''})
+        assert False, 'Expected ValueError'
+    except ValueError:
+        pass
+
+
+def test_load_rejects_empty_session_id(tmp_path):
+    store = SessionStore(tmp_path / 'sessions')
+    try:
+        store.load('')
+        assert False, 'Expected ValueError'
+    except ValueError:
+        pass
+
+
+def test_save_rejects_dotdot_session_id(tmp_path):
+    store = SessionStore(tmp_path / 'sessions')
+    try:
+        store.save('..', {'session_id': '..'})
+        assert False, 'Expected ValueError'
+    except ValueError:
+        pass
+
+
+def test_save_rejects_slash_session_id(tmp_path):
+    store = SessionStore(tmp_path / 'sessions')
+    try:
+        store.save('..\\outside', {'session_id': '..\\outside'})
+        assert False, 'Expected ValueError'
+    except ValueError:
+        pass
+
+
+def test_save_rejects_backslash_session_id(tmp_path):
+    store = SessionStore(tmp_path / 'sessions')
+    try:
+        store.save('..\\outside', {'session_id': '..\\outside'})
+        assert False, 'Expected ValueError'
+    except ValueError:
+        pass
+
+
+def test_save_rejects_colon_session_id(tmp_path):
+    store = SessionStore(tmp_path / 'sessions')
+    try:
+        store.save('a:b', {'session_id': 'a:b'})
+        assert False, 'Expected ValueError'
+    except ValueError:
+        pass
+
+
+def test_save_accepts_safe_ids(tmp_path):
+    store = SessionStore(tmp_path / 'sessions')
+    for sid in ['default', 'mysession', 'feature-1', 'user.name', 'a_b']:
+        store.save(sid, {'session_id': sid})
+        loaded = store.load(sid)
+        assert loaded is not None
+        assert loaded['session_id'] == sid
+
+
+def test_latest_id_skips_unsafe_filenames(tmp_path):
+    store = SessionStore(tmp_path / 'sessions')
+    sessions_dir = tmp_path / 'sessions'
+    sessions_dir.mkdir(parents=True)
+    (sessions_dir / 'good.json').write_text('{"session_id": "good"}', encoding='utf-8')
+    (sessions_dir / '...outside.json').write_text('{"session_id": "bad"}', encoding='utf-8')
+    latest = store.latest_id()
+    assert latest == 'good'

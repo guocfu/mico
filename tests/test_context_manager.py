@@ -764,3 +764,102 @@ class TestRetrieveEpisodicNotes:
         sm.append_episodic_note("some unrelated text", tags=[], source="read_file src/auth.py")
         notes = cm._retrieve_episodic_notes(sm, "auth", limit=3)
         assert len(notes) == 1
+
+
+# ---------------------------------------------------------------------------
+# Checkpoint section (Task 3)
+# ---------------------------------------------------------------------------
+
+class TestContextManagerCheckpoint:
+    def test_checkpoint_text_before_working_memory(self):
+        cm = ContextManager(PromptBuilder())
+        sm = _memory_with_summary()
+        bundle = cm.build(
+            tool_catalog=_sample_catalog(),
+            approval_policy="auto",
+            workspace_root="/tmp/ws",
+            user_message="hello",
+            history=[],
+            session_memory=sm,
+            checkpoint_text="Task checkpoint:\n  goal: build login\n",
+        )
+        text = bundle.text
+        cp_pos = text.find("Task checkpoint:")
+        wm_pos = text.find("Working memory:")
+        assert cp_pos >= 0
+        assert wm_pos >= 0
+        assert cp_pos < wm_pos
+
+    def test_checkpoint_metadata_present(self):
+        cm = ContextManager(PromptBuilder())
+        sm = _memory_with_summary()
+        resume_state = {
+            "status": "partial-stale",
+            "stale_paths": ["src/a.py"],
+            "runtime_identity_mismatch_fields": [],
+        }
+        bundle = cm.build(
+            tool_catalog=_sample_catalog(),
+            approval_policy="auto",
+            workspace_root="/tmp/ws",
+            user_message="hello",
+            history=[],
+            session_memory=sm,
+            checkpoint_text="Task checkpoint:\n  stale\n",
+            resume_state=resume_state,
+        )
+        meta = bundle.metadata
+        assert meta["resume_status"] == "partial-stale"
+        assert meta["checkpoint_chars"] > 0
+        assert "src/a.py" in meta["stale_paths"]
+        assert meta["runtime_identity_mismatch_fields"] == []
+
+    def test_current_request_still_last_with_checkpoint(self):
+        cm = ContextManager(PromptBuilder())
+        sm = _memory_with_summary()
+        bundle = cm.build(
+            tool_catalog=_sample_catalog(),
+            approval_policy="auto",
+            workspace_root="/tmp/ws",
+            user_message="do stuff",
+            history=[],
+            session_memory=sm,
+            checkpoint_text="Task checkpoint:\n",
+        )
+        assert bundle.text.strip().endswith("User request: do stuff")
+
+    def test_no_checkpoint_text_means_no_checkpoint_section(self):
+        cm = ContextManager(PromptBuilder())
+        sm = _memory_with_summary()
+        bundle = cm.build(
+            tool_catalog=_sample_catalog(),
+            approval_policy="auto",
+            workspace_root="/tmp/ws",
+            user_message="hello",
+            history=[],
+            session_memory=sm,
+        )
+        assert "Task checkpoint:" not in bundle.text
+        assert bundle.metadata.get("resume_status", "no-checkpoint") == "no-checkpoint"
+
+    def test_tiny_budget_truncates_checkpoint_not_current_request(self):
+        cm = ContextManager(PromptBuilder(), total_budget=500, section_budgets={
+            "prefix": 100,
+            "memory_index": 10,
+            "checkpoint": 50,
+            "working_memory": 10,
+            "relevant_memory": 10,
+            "history": 10,
+        })
+        sm = _memory_with_summary()
+        long_checkpoint = "Task checkpoint:\n" + "  detail: " + "x" * 500 + "\n"
+        bundle = cm.build(
+            tool_catalog=_sample_catalog(),
+            approval_policy="auto",
+            workspace_root="/tmp/ws",
+            user_message="my request",
+            history=[],
+            session_memory=sm,
+            checkpoint_text=long_checkpoint,
+        )
+        assert bundle.text.strip().endswith("User request: my request")
