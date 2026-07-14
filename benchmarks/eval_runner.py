@@ -124,7 +124,7 @@ def _failure_case(task, error):
     }
 
 
-def _build_prompt_metadata(session_memory, user_message, history, checkpoint_text, config):
+def _build_prompt_bundle(session_memory, user_message, history, checkpoint_text, config):
     prompt_builder = PromptBuilder()
     if config.context_compression:
         total_budget = config.total_budget
@@ -146,38 +146,71 @@ def _build_prompt_metadata(session_memory, user_message, history, checkpoint_tex
         session_memory=session_memory,
         checkpoint_text=checkpoint_text,
     )
-    return bundle.metadata
+    return bundle
 
 
 def _make_context_compression_case(task, *, baseline_config, current_config):
     user_message = task.get("user_message", "test")
-    history = _synthetic_history(task)
-    session_memory = _synthetic_session_memory(task)
-    checkpoint_text = _synthetic_checkpoint_text(task)
+    history = _fixture_history(task)
+    session_memory = _fixture_session_memory(task)
+    checkpoint_text = str(task.get("checkpoint_text", ""))
 
-    baseline_meta = _build_prompt_metadata(
+    baseline_bundle = _build_prompt_bundle(
         session_memory,
         user_message,
         history,
         checkpoint_text,
         baseline_config,
     )
-    current_meta = _build_prompt_metadata(
+    current_bundle = _build_prompt_bundle(
         session_memory,
         user_message,
         history,
         checkpoint_text,
         current_config,
     )
-    current_request_preserved = current_meta.get("current_request_preserved_rate", 0.0)
+    baseline_meta = baseline_bundle.metadata
+    current_meta = current_bundle.metadata
+    required_markers = list(task.get("required_markers", []))
+    forbidden_markers = list(task.get("forbidden_markers", []))
+    current_request_marker = "User request: " + user_message
+    missing_required_markers = [
+        marker for marker in required_markers if marker not in current_bundle.text
+    ]
+    unexpected_forbidden_markers = [
+        marker for marker in forbidden_markers if marker in current_bundle.text
+    ]
+    missing_baseline_markers = [
+        marker
+        for marker in required_markers + forbidden_markers
+        if marker not in baseline_bundle.text
+    ]
+    current_request_preserved = current_request_marker in current_bundle.text
+    semantic_checks_passed = (
+        current_request_preserved
+        and not missing_required_markers
+        and not unexpected_forbidden_markers
+        and not missing_baseline_markers
+    )
     compression_rate = _compression_rate(
         baseline_meta["prompt_chars"],
         current_meta["prompt_chars"],
     )
     ok = (
-        baseline_meta["prompt_chars"] >= current_meta["prompt_chars"]
-        and current_request_preserved == 1.0
+        baseline_meta["prompt_chars"] > current_meta["prompt_chars"]
+        and semantic_checks_passed
     )
+    errors = []
+    if baseline_meta["prompt_chars"] <= current_meta["prompt_chars"]:
+        errors.append("compressed prompt is not smaller than baseline")
+    if not current_request_preserved:
+        errors.append("current request was not preserved")
+    if missing_required_markers:
+        errors.append("missing required markers: " + ", ".join(missing_required_markers))
+    if unexpected_forbidden_markers:
+        errors.append("forbidden markers still present: " + ", ".join(unexpected_forbidden_markers))
+    if missing_baseline_markers:
+        errors.append("fixture markers missing from baseline: " + ", ".join(missing_baseline_markers))
     return {
         "name": task["name"],
         "group": task["group"],
@@ -189,13 +222,16 @@ def _make_context_compression_case(task, *, baseline_config, current_config):
         "current": {
             "prompt_chars": current_meta["prompt_chars"],
             "context_compression": current_config.context_compression,
-            "current_request_preserved_rate": current_request_preserved,
+            "current_request_preserved_rate": 1.0 if current_request_preserved else 0.0,
             "sections_truncated": current_meta.get("sections_truncated", []),
             "older_read_file_entries_used": current_meta.get("older_read_file_entries_used", 0),
+            "semantic_checks_passed": semantic_checks_passed,
+            "missing_required_markers": missing_required_markers,
+            "unexpected_forbidden_markers": unexpected_forbidden_markers,
         },
         "compression_rate": compression_rate,
         "expected_resume_status": task.get("expected_resume_status"),
-        "errors": [] if ok else ["current prompt is larger than baseline or request was clipped"],
+        "errors": errors,
     }
 
 
@@ -364,61 +400,39 @@ def _run_checkpoint_resume(task, config):
         shutil.rmtree(root, ignore_errors=True)
 
 
-def _synthetic_history(task):
-    history_items = int(task.get("history_items", 10))
-    history_payload_chars = int(task.get("history_payload_chars", 160))
-    read_file_ranges = int(task.get("read_file_ranges", 0))
-    read_result_chars = int(task.get("read_result_chars", 420))
-
-    history = []
-    for i in range(history_items):
-        history.append({
-            "role": "user",
-            "content": "message " + str(i) + " " + ("x" * history_payload_chars),
-        })
-        history.append({
-            "role": "assistant",
-            "content": "reply " + str(i) + " " + ("y" * (history_payload_chars // 2)),
-        })
-
-    for i in range(read_file_ranges):
-        start = i * 40 + 1
-        end = start + 39
-        history.append({
-            "role": "tool",
-            "name": "read_file",
-            "args": {"path": "src/large.py", "start": start, "end": end},
-            "content": "range " + str(i) + " " + ("z" * read_result_chars),
-            "metadata": {"ok": True, "error_kind": "ok"},
-        })
-    return history
+def _fixture_history(task):
+    history = task.get("history", [])
+    if not isinstance(history, list):
+        raise ValueError("context fixture history must be a list")
+    return [dict(item) for item in history]
 
 
-def _synthetic_session_memory(task):
+def _fixture_session_memory(task):
     memory = SessionMemoryState()
-    memory_notes = int(task.get("memory_notes", 0))
-    file_summaries = int(task.get("file_summaries", 0))
-    for i in range(memory_notes):
-        memory.append_episodic_note(
-            "note " + str(i) + " " + ("m" * int(task.get("memory_note_chars", 160))),
-            tags=["eval", "note" + str(i)],
-        )
-    for i in range(file_summaries):
-        path = "src/file_" + str(i) + ".py"
+    fixture = task.get("session_memory", {})
+    if not isinstance(fixture, dict):
+        raise ValueError("context fixture session_memory must be an object")
+
+    task_summary = fixture.get("task_summary", "")
+    if task_summary:
+        memory.set_task_summary(str(task_summary))
+
+    for item in fixture.get("file_summaries", []):
+        path = str(item["path"])
         memory.remember_file(path)
         memory.record_file_summary(
             path,
-            "summary " + str(i) + " " + ("s" * int(task.get("file_summary_chars", 160))),
-            freshness="eval-" + str(i),
+            str(item["summary"]),
+            freshness=item.get("freshness", "fixture"),
+        )
+
+    for item in fixture.get("episodic_notes", []):
+        memory.append_episodic_note(
+            str(item["text"]),
+            tags=item.get("tags", []),
+            source=str(item.get("source", "fixture")),
         )
     return memory
-
-
-def _synthetic_checkpoint_text(task):
-    checkpoint_chars = int(task.get("checkpoint_chars", 0))
-    if checkpoint_chars <= 0:
-        return ""
-    return "Task checkpoint:\n  summary: " + ("c" * checkpoint_chars)
 
 
 def _mutate_checkpoint_schema(session_path):

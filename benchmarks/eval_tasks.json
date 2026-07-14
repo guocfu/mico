@@ -1,38 +1,234 @@
 [
   {
-    "name": "context_long_history_python",
+    "name": "context_recent_failure_priority",
     "group": "context_compression",
-    "user_message": "根据当前请求回答，不要裁剪这句话。",
-    "history_items": 30,
-    "history_payload_chars": 260
+    "user_message": "修复 src/auth.py 中过期 token 被接受的问题，并运行 tests/test_auth.py。",
+    "history": [
+      {
+        "role": "user",
+        "content": "上周排查登录超时时曾讨论把所有 token 校验临时短路；该方案只用于本地演示，不能带入当前修复。"
+      },
+      {
+        "role": "assistant",
+        "content": "已记录：临时演示方案不适用于生产鉴权，后续需要以 expires_at 与当前 UTC 时间比较为准。"
+      },
+      {
+        "role": "user",
+        "content": "仓库还包含旧版 session cookie 迁移笔记、OAuth 回调排查记录和一次本地环境证书失败；这些记录与本次 token 过期判断无关。"
+      },
+      {
+        "role": "assistant",
+        "content": "历史提议：OBSOLETE_AUTH_ACCEPT_ALL_BRANCH 会在 payload 缺少 expires_at 时直接返回 True。该提议已被安全审查否决，因为它会让过期 token 绕过认证。\n\n当时的讨论还比较了三种不应采用的兼容方案：把缺失过期时间视为永不过期、把解析异常降级为匿名会话、以及只记录警告但允许请求继续。三种方案都会扩大未验证凭据的有效范围。安全评审要求鉴权函数返回布尔结果时保持 fail closed：字段缺失、时间格式错误、时区信息缺失和过期边界均应拒绝。该结论只用于排除旧方案，当前实现仍需基于现有函数和测试做最小改动。"
+      },
+      {
+        "role": "tool",
+        "name": "read_file",
+        "args": {"path": "src/auth.py", "start": 1, "end": 120},
+        "content": "# src/auth.py\ndef validate_token(payload, now):\n    expires_at = payload.get('expires_at')\n    if expires_at is None:\n        return False\n    return expires_at >= now\n\ndef parse_expiry(value):\n    parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))\n    if parsed.tzinfo is None:\n        raise ValueError('expiry must include timezone')\n    return parsed\n\n调用方会把 ISO-8601 字符串转换为 timezone-aware datetime。当前实现的边界条件可能错误：expires_at 等于 now 时仍会通过。调用链还会记录认证失败原因，但不会把 token 内容写入日志；这一约束不需要在本次修改中变更。"
+      },
+      {
+        "role": "assistant",
+        "content": "初步判断应将比较从 >= 改成 >，并确认缺少 expires_at 时继续拒绝。修改前需检查测试是否覆盖等于当前时间、早于当前时间和未来时间三种情形。"
+      },
+      {
+        "role": "tool",
+        "name": "read_file",
+        "args": {"path": "tests/test_auth.py", "start": 1, "end": 160},
+        "content": "# tests/test_auth.py\ndef test_accepts_future_token(): ...\ndef test_rejects_missing_expiry(): ...\n现有测试没有覆盖 expires_at == now。测试夹具固定使用 2026-07-14T09:00:00+00:00，便于断言边界行为。"
+      },
+      {
+        "role": "assistant",
+        "content": "实现计划：补充 test_rejects_token_expiring_now，修改 validate_token 的边界比较，随后运行单文件测试；不要改动 OAuth 或 cookie 迁移代码。"
+      },
+      {
+        "role": "tool",
+        "name": "run_command",
+        "args": {"argv": ["python", "-m", "pytest", "tests/test_auth.py", "-q"]},
+        "content": "FAILED tests/test_auth.py::test_rejects_token_expiring_now - AssertionError: expected False but got True\n\nCaptured test setup:\n  fixed_now = 2026-07-14T09:00:00+00:00\n  payload = {'sub': 'demo-user', 'expires_at': fixed_now}\n  expected validate_token(payload, fixed_now) is False\n  actual validate_token(payload, fixed_now) is True\n\nCollected observations:\n  - future expiry remains accepted\n  - missing expiry remains rejected\n  - only the equality boundary is incorrect\n  - parsing already returns timezone-aware datetime values\n  - no database, Redis, OAuth callback, or cookie code was executed\n\nSuggested minimal patch: replace the inclusive comparison with a strict future-time comparison, then add the equality test beside the existing future-token test.\n\n1 failed, 2 passed in 0.08s\nRECENT_AUTH_FAILURE_MARKER"
+      }
+    ],
+    "session_memory": {
+      "task_summary": "修复 auth token 过期边界并用 tests/test_auth.py 验证。",
+      "file_summaries": [
+        {"path": "src/auth.py", "summary": "validate_token 当前使用 expires_at >= now。"}
+      ]
+    },
+    "required_markers": ["RECENT_AUTH_FAILURE_MARKER"],
+    "forbidden_markers": ["OBSOLETE_AUTH_ACCEPT_ALL_BRANCH"]
   },
   {
-    "name": "context_many_read_ranges",
+    "name": "context_repeated_read_compaction",
     "group": "context_compression",
-    "user_message": "总结最新目标。",
-    "history_items": 24,
-    "history_payload_chars": 180,
-    "read_file_ranges": 12,
-    "read_result_chars": 520
+    "user_message": "根据已读取的订单聚合逻辑，修复空订单列表的 total 字段，并运行对应测试。",
+    "history": [
+      {
+        "role": "user",
+        "content": "先前曾阅读 payment、shipping 与 analytics 模块，以确认订单事件字段的命名方式；本次只处理 aggregate_order.py。"
+      },
+      {
+        "role": "tool",
+        "name": "read_file",
+        "args": {"path": "src/orders/aggregate_order.py", "start": 1, "end": 40},
+        "content": "from decimal import Decimal\n\ndef aggregate(lines):\n    total = sum((line.price for line in lines), Decimal('0'))\n    return {'count': len(lines), 'total': str(total)}"
+      },
+      {
+        "role": "assistant",
+        "content": "第 1 段确认 aggregate 使用 Decimal，返回结构由 count 与 total 组成；需要继续核对调用方对空列表的格式要求。"
+      },
+      {
+        "role": "tool",
+        "name": "read_file",
+        "args": {"path": "src/orders/aggregate_order.py", "start": 41, "end": 80},
+        "content": "OBSOLETE_READ_RANGE_PAYLOAD：旧排查曾建议空列表直接返回 {'count': 0}，但该做法会破坏 API 契约，因为消费者始终读取 total 字段。"
+      },
+      {
+        "role": "tool",
+        "name": "read_file",
+        "args": {"path": "src/orders/serializers.py", "start": 1, "end": 80},
+        "content": "serialize_summary 会把 total 传给前端金额组件；金额组件期待字符串格式，例如 '0.00'，不能接受缺失字段或 Python Decimal 对象。"
+      },
+      {
+        "role": "assistant",
+        "content": "结论：空列表仍应返回 total，且格式必须与非空路径一致。接下来检查现有单元测试和 Decimal 的格式化约定。"
+      },
+      {
+        "role": "tool",
+        "name": "read_file",
+        "args": {"path": "tests/test_aggregate_order.py", "start": 1, "end": 120},
+        "content": "测试覆盖两条订单行的 19.50 汇总，但没有覆盖空列表。夹具中的价格均为 Decimal，测试应避免使用 float 比较。\n\n现有断言还校验了返回对象可被 JSON serializer 消费、count 为整数、total 为字符串，并且调用者会将 total 直接传入金额组件。历史缺陷曾由一个仅包含 count 的快捷返回引入，导致 API 客户端在读取 total 时抛出 KeyError。修复应在聚合函数内部统一输出结构，而不是在 serializer 中为缺失字段补默认值；后者会掩盖其他调用方的契约错误。"
+      },
+      {
+        "role": "assistant",
+        "content": "修改策略：保留 aggregate 的返回结构，确保空列表得到 '0' 或项目约定的金额字符串；新增测试后运行 tests/test_aggregate_order.py。"
+      },
+      {
+        "role": "tool",
+        "name": "run_command",
+        "args": {"argv": ["python", "-m", "pytest", "tests/test_aggregate_order.py", "-q"]},
+        "content": "FAILED tests/test_aggregate_order.py::test_empty_order_lines - KeyError: 'total'\n\nCaptured assertion:\n  result = aggregate([])\n  assert result['count'] == 0\n  assert result['total'] == '0'\n\nActual result only contained {'count': 0}. The serializer did not run because the aggregate return object was already incomplete. Existing non-empty tests confirm that Decimal values are converted to strings before the response is returned. The fix must keep the response shape identical for empty and non-empty order lists; it must not special-case the serializer, convert money through float, or change unrelated payment calculations.\n\nTest scope after the patch: add the empty-list expectation, retain the two-line Decimal sum case, and run tests/test_aggregate_order.py.\nLATEST_ORDER_TOTAL_CONCLUSION_MARKER"
+      }
+    ],
+    "session_memory": {
+      "task_summary": "修复订单聚合空列表的 total 字段。",
+      "file_summaries": [
+        {"path": "src/orders/aggregate_order.py", "summary": "aggregate 必须始终返回 count 和 total。"}
+      ]
+    },
+    "required_markers": ["LATEST_ORDER_TOTAL_CONCLUSION_MARKER"],
+    "forbidden_markers": ["OBSOLETE_READ_RANGE_PAYLOAD"]
   },
   {
-    "name": "context_memory_heavy",
+    "name": "context_relevant_memory_priority",
     "group": "context_compression",
-    "user_message": "继续实现功能。",
-    "memory_notes": 12,
-    "memory_note_chars": 220,
-    "file_summaries": 8,
-    "file_summary_chars": 220,
-    "history_items": 18,
-    "history_payload_chars": 200
+    "user_message": "调整 checkout rate limit 的重试窗口，并补充限流边界测试。",
+    "history": [
+      {
+        "role": "user",
+        "content": "上一次发布主要处理商品搜索索引重建和图片缩略图任务，涉及的队列参数不适用于 checkout 接口。"
+      },
+      {
+        "role": "assistant",
+        "content": "搜索索引任务的批处理大小、缩略图重试策略和 CDN 缓存规则已完成，不应影响支付链路。"
+      },
+      {
+        "role": "user",
+        "content": "checkout 网关的请求在一分钟窗口内需要限制重试次数，超过限制应返回 429，并由客户端等待 Retry-After。"
+      },
+      {
+        "role": "assistant",
+        "content": "OBSOLETE_CHECKOUT_GATEWAY_NOTE：曾考虑在网关层关闭所有重试以缓解峰值，但这会影响正常网络抖动恢复，已不采用。"
+      },
+      {
+        "role": "tool",
+        "name": "read_file",
+        "args": {"path": "src/checkout/rate_limit.py", "start": 1, "end": 120},
+        "content": "RateLimiter 使用 Redis INCR 与 EXPIRE 维护窗口计数；retry_window_seconds 由配置对象传入，达到上限时返回 retry_after_seconds。\n\n键格式为 checkout:rate-limit:{customer_id}，首次请求会设置窗口过期时间，后续请求不得重新延长窗口。达到阈值后响应需要保留状态码 429、Retry-After 和可观测性标签；不能通过删除 Redis 键来重置计数。配置加载器支持环境变量覆盖，但测试直接构造配置对象，以避免依赖开发机环境。此次变更只涉及 retry window 数值及其边界断言。"
+      },
+      {
+        "role": "assistant",
+        "content": "需要读取会话中已有的 checkout 配置结论，避免重复猜测 Redis 键格式、重试窗口与测试时钟的约定。"
+      },
+      {
+        "role": "tool",
+        "name": "read_file",
+        "args": {"path": "tests/test_checkout_rate_limit.py", "start": 1, "end": 160},
+        "content": "测试使用 frozen clock；边界用例应覆盖第 3 次允许、第 4 次拒绝，以及窗口经过后计数重新开始。\n\n测试替身会记录 Redis INCR、EXPIRE 和 TTL 调用顺序：第一次请求必须写入 TTL，第二和第三次不得覆盖 TTL，第四次拒绝时仍保留剩余 TTL。验证中还会检查 customer_id 不同的键彼此隔离、429 响应不泄露内部 Redis 键名，以及窗口到期后的新请求重新成为第 1 次请求。所有时间均由 frozen clock 控制，不能通过 sleep 等待窗口结束。"
+      },
+      {
+        "role": "assistant",
+        "content": "实现时只改 rate limit 配置和测试，不修改支付授权、优惠券计算或异步发货任务。"
+      },
+      {
+        "role": "tool",
+        "name": "run_command",
+        "args": {"argv": ["python", "-m", "pytest", "tests/test_checkout_rate_limit.py", "-q"]},
+        "content": "FAILED tests/test_checkout_rate_limit.py::test_retry_window - expected Retry-After=60\n\nFrozen-clock sequence:\n  09:00:00 request 1 -> allowed\n  09:00:05 request 2 -> allowed\n  09:00:10 request 3 -> allowed\n  09:00:15 request 4 -> 429 with Retry-After=45\n\nThe configured retry window is 60 seconds, so the test expects the limit key to expire at 09:01:00 and the response to describe the remaining window consistently. Do not change the Redis key namespace, payment authorization flow, coupon validation, or worker retry policy. The focused patch should update the window configuration and assert both the fourth-request rejection and post-expiry reset.\nRECENT_RATE_LIMIT_TEST_MARKER"
+      }
+    ],
+    "session_memory": {
+      "task_summary": "调整 checkout 的 rate limit 重试窗口，并保留 Redis 计数语义。",
+      "file_summaries": [
+        {"path": "src/checkout/rate_limit.py", "summary": "RateLimiter 使用 Redis INCR/EXPIRE，拒绝时返回 Retry-After。"}
+      ],
+      "episodic_notes": [
+        {"text": "checkout rate limit 当前约定：RATE_LIMIT_RETRY_WINDOW=60，最多允许 3 次请求，第 4 次返回 429。", "tags": ["checkout", "rate", "limit"]},
+        {"text": "checkout rate limit 测试依赖 frozen clock；窗口到期后应允许新的第 1 次请求。", "tags": ["checkout", "rate", "limit", "test"]},
+        {"text": "商品搜索索引重建使用批处理任务，与 checkout rate limit 无共享 Redis 键。", "tags": ["search", "index"]},
+        {"text": "图片缩略图任务的重试次数由 worker 配置控制，与 HTTP Retry-After 无关。", "tags": ["image", "worker"]}
+      ]
+    },
+    "required_markers": ["RATE_LIMIT_RETRY_WINDOW=60", "RECENT_RATE_LIMIT_TEST_MARKER"],
+    "forbidden_markers": ["OBSOLETE_CHECKOUT_GATEWAY_NOTE"]
   },
   {
-    "name": "context_checkpoint_heavy",
+    "name": "context_checkpoint_next_step_priority",
     "group": "context_compression",
-    "user_message": "从 checkpoint 继续。",
-    "checkpoint_chars": 2400,
-    "history_items": 16,
-    "history_payload_chars": 220
+    "user_message": "从支付回调的 Checkpoint 继续，先完成签名校验，再运行回调测试。",
+    "history": [
+      {
+        "role": "user",
+        "content": "支付回调排查期间还收集了 webhook 重放、运营后台导出、退款对账和监控告警的记录；本轮只处理签名校验。"
+      },
+      {
+        "role": "assistant",
+        "content": "需要避免同时修改事件投递、退款状态机和告警阈值，以免扩大本次回调修复的影响范围。"
+      },
+      {
+        "role": "tool",
+        "name": "read_file",
+        "args": {"path": "src/payments/callback.py", "start": 1, "end": 140},
+        "content": "verify_signature 使用 HMAC-SHA256，签名来源是原始请求 body 与 payment provider secret；解析 JSON 后重新序列化会改变空格和字段顺序。"
+      },
+      {
+        "role": "assistant",
+        "content": "当前失败路径发生在 JSON 解析之后，因此应在解析前保留 raw_body 并将其传给 verify_signature。"
+      },
+      {
+        "role": "tool",
+        "name": "read_file",
+        "args": {"path": "tests/test_payment_callback.py", "start": 1, "end": 180},
+        "content": "测试使用固定 body 与签名；有效签名应返回 200，无效签名应返回 401，解析失败不应掩盖签名错误。"
+      },
+      {
+        "role": "assistant",
+        "content": "修改完成后运行 tests/test_payment_callback.py；如果测试失败，仅根据失败输出修正签名参数传递。"
+      },
+      {
+        "role": "tool",
+        "name": "run_command",
+        "args": {"argv": ["python", "-m", "pytest", "tests/test_payment_callback.py", "-q"]},
+        "content": "FAILED tests/test_payment_callback.py::test_valid_signature - verify_signature received normalized JSON instead of raw body\nRECENT_CALLBACK_TEST_MARKER"
+      }
+    ],
+    "session_memory": {
+      "task_summary": "支付回调应在 JSON 解析前使用 raw_body 完成签名校验。",
+      "file_summaries": [
+        {"path": "src/payments/callback.py", "summary": "回调签名必须使用原始 body，不可使用重新序列化的 JSON。"}
+      ]
+    },
+    "checkpoint_text": "Task checkpoint:\n  goal: CHECKPOINT_GOAL_MARKER 修复支付回调签名校验。\n  summary: 已定位到 JSON 规范化导致签名输入变化。\n  next_step: CHECKPOINT_NEXT_STEP_MARKER 将 raw_body 传入 verify_signature，然后运行 tests/test_payment_callback.py。\n\n排查记录：provider 会在 header 中提供签名版本和时间戳；日志中还包含回调重放、退款对账、运营后台导出、告警降噪、历史密钥轮换、灰度发布观察和第三方网络延迟分析。这些信息可用于后续事故复盘，但不应覆盖本轮 raw_body 签名修复。\n\n详细背景：旧实现先调用 request.json()，再通过 json.dumps(payload, sort_keys=True) 生成签名输入。这个过程可能改变字段顺序、空白字符和 Unicode 转义。测试夹具使用固定原始 body，签名由该原始字节序列计算。修复后应保持错误码契约：无效签名返回 401，合法签名返回 200，解析异常的处理不得绕过签名校验。\n\n恢复前核对清单：确认 callback endpoint 仍读取未消费的请求体；确认 provider secret 从受保护的环境变量读取；确认签名 header 缺失时返回 401 而不是 500；确认日志只记录 request id 与 provider event id，不记录 raw body 或 secret；确认回放保护仍在签名通过之后执行；确认失败测试只涉及 callback 模块。实现过程中不要把 JSON parser 异常当作签名成功，也不要为测试而改变 provider 的时间戳容忍度。完成代码修改后，应先运行单文件测试，再检查有效和无效签名的响应状态。\n\n审计附录：回调 endpoint 的网络超时、重复投递和 provider 证书轮换分别由 transport、idempotency 和 secret rotation 模块处理。它们的日志可能与本次失败出现在同一运行记录中，但不应改变签名输入。回调事件在校验通过后才进入订单状态机；退款、优惠券回滚和库存释放属于下游业务处理。测试运行时应保持 provider secret 为固定夹具值，避免从真实环境读取配置。若 raw_body 已被中间件消费，应调整请求体读取顺序，而不是关闭签名检查。所有修复都应限定在 callback 处理函数及其单元测试，避免把临时调试分支遗留到生产路径。\n\nOBSOLETE_CHECKPOINT_BRANCH：曾提议为兼容旧客户端临时跳过 HMAC 校验并只比较订单号；该方案已被安全审查拒绝，不能在恢复任务时采纳。",
+    "required_markers": ["CHECKPOINT_GOAL_MARKER", "CHECKPOINT_NEXT_STEP_MARKER", "RECENT_CALLBACK_TEST_MARKER"],
+    "forbidden_markers": ["OBSOLETE_CHECKPOINT_BRANCH"]
   },
   {
     "name": "memory_followup_auth",

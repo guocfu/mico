@@ -6,12 +6,16 @@ def compute_eval_metrics(result):
 
     compression_rates = []
     preserved_rates = []
+    semantic_quality_rates = []
     for case in context_cases:
         baseline_chars = case.get("baseline", {}).get("prompt_chars", 0)
         current_chars = case.get("current", {}).get("prompt_chars", 0)
         if baseline_chars > 0:
             compression_rates.append(round((baseline_chars - current_chars) / baseline_chars, 4))
         preserved_rates.append(case.get("current", {}).get("current_request_preserved_rate", 0.0))
+        semantic_quality_rates.append(
+            1.0 if case.get("current", {}).get("semantic_checks_passed") is True else 0.0
+        )
 
     repeated_before = sum(c.get("baseline", {}).get("followup_read_file_count", 0) for c in memory_cases)
     repeated_after = sum(c.get("current", {}).get("followup_read_file_count", 0) for c in memory_cases)
@@ -45,6 +49,7 @@ def compute_eval_metrics(result):
         "avg_prompt_compression_rate": _avg(compression_rates),
         "max_prompt_compression_rate": max(compression_rates) if compression_rates else 0.0,
         "current_request_preserved_rate": _avg(preserved_rates),
+        "context_semantic_quality_pass_rate": _avg(semantic_quality_rates),
         "baseline_followup_read_file_count": repeated_before,
         "current_followup_read_file_count": repeated_after,
         "followup_read_file_reduction": repeated_before - repeated_after,
@@ -67,6 +72,7 @@ def markdown_eval_summary(result):
         "| Average prompt compression | {} |".format(_percent(metrics["avg_prompt_compression_rate"])),
         "| Max prompt compression | {} |".format(_percent(metrics["max_prompt_compression_rate"])),
         "| Current request preserved | {} |".format(_percent(metrics["current_request_preserved_rate"])),
+        "| Context semantic quality gate | {} |".format(_percent(metrics["context_semantic_quality_pass_rate"])),
         "| Baseline follow-up read_file count | {} |".format(metrics["baseline_followup_read_file_count"]),
         "| Current follow-up read_file count | {} |".format(metrics["current_followup_read_file_count"]),
         "| Follow-up read_file reduction | {} |".format(metrics["followup_read_file_reduction"]),
@@ -76,14 +82,11 @@ def markdown_eval_summary(result):
         "",
         "## 简历候选表述",
         "",
-        "- 构建 {} 组 deterministic ablation benchmark，平均 prompt 压缩率 {}，最高压缩率 {}，follow-up 重复读文件次数从 {} 降到 {}，workspace 漂移识别率 {}，恢复状态识别准确率 {}。".format(
-            metrics["total_eval_cases"],
+        "- 在 {} 个语义化确定性长上下文回归用例中，Prompt 长度平均减少 {}，最高减少 {}，关键任务事实保留率 {}。".format(
+            metrics["context_case_count"],
             _percent(metrics["avg_prompt_compression_rate"]),
             _percent(metrics["max_prompt_compression_rate"]),
-            metrics["baseline_followup_read_file_count"],
-            metrics["current_followup_read_file_count"],
-            _percent(metrics["workspace_drift_detection_rate"]),
-            _percent(metrics["resume_status_accuracy"]),
+            _percent(metrics["context_semantic_quality_pass_rate"]),
         ),
         "",
         "---",

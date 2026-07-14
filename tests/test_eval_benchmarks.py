@@ -2,6 +2,7 @@ from benchmarks.eval_config import BASELINE, CURRENT, AblationConfig
 from benchmarks.eval_metrics import compute_eval_metrics
 from benchmarks.eval_runner import load_eval_tasks, run_eval, result_to_dict
 from benchmarks.eval_metrics import markdown_eval_summary
+from copy import deepcopy
 import json
 
 
@@ -25,6 +26,7 @@ def test_compute_eval_metrics_context_compression():
                 "current": {
                     "prompt_chars": 700,
                     "current_request_preserved_rate": 1.0,
+                    "semantic_checks_passed": True,
                 },
             },
             {
@@ -33,6 +35,7 @@ def test_compute_eval_metrics_context_compression():
                 "current": {
                     "prompt_chars": 1500,
                     "current_request_preserved_rate": 1.0,
+                    "semantic_checks_passed": True,
                 },
             },
         ]
@@ -42,6 +45,7 @@ def test_compute_eval_metrics_context_compression():
     assert metrics["avg_prompt_compression_rate"] == 0.275
     assert metrics["max_prompt_compression_rate"] == 0.3
     assert metrics["current_request_preserved_rate"] == 1.0
+    assert metrics["context_semantic_quality_pass_rate"] == 1.0
 
 
 def test_load_eval_tasks_has_12_cases():
@@ -68,9 +72,23 @@ def test_run_eval_returns_baseline_current_cases():
     for case in data["cases"]:
         if case["group"] == "context_compression":
             assert case["baseline"]["prompt_chars"] > case["current"]["prompt_chars"]
+            assert case["current"]["semantic_checks_passed"] is True
+            assert case["current"]["missing_required_markers"] == []
+            assert case["current"]["unexpected_forbidden_markers"] == []
 
     assert data["metrics"]["avg_prompt_compression_rate"] > 0
     assert data["metrics"]["max_prompt_compression_rate"] > 0
+
+
+def test_context_compression_fails_when_required_fact_is_missing():
+    task = next(task for task in load_eval_tasks() if task["group"] == "context_compression")
+    task = deepcopy(task)
+    task["required_markers"] = ["MISSING_CONTEXT_FACT"]
+
+    case = run_eval(tasks=[task])["cases"][0]
+
+    assert case["status"] == "FAIL"
+    assert case["current"]["missing_required_markers"] == ["MISSING_CONTEXT_FACT"]
 
 
 def test_eval_metrics_include_memory_and_resume():
@@ -78,6 +96,7 @@ def test_eval_metrics_include_memory_and_resume():
     metrics = data["metrics"]
     assert metrics["total_eval_cases"] == 12
     assert metrics["context_case_count"] == 4
+    assert metrics["context_semantic_quality_pass_rate"] == 1.0
     assert metrics["memory_case_count"] == 4
     assert metrics["resume_case_count"] == 4
     assert metrics["baseline_followup_read_file_count"] > metrics["current_followup_read_file_count"]
@@ -95,10 +114,11 @@ def test_markdown_eval_summary_contains_resume_numbers():
     text = markdown_eval_summary(data)
     assert "Mico Ablation Evaluation Summary" in text
     assert "Average prompt compression" in text
+    assert "Context semantic quality gate" in text
     assert "Follow-up read_file reduction" in text
     assert "Workspace drift detection" in text
     assert "Resume status accuracy" in text
-    assert "deterministic ablation benchmark" in text
+    assert "语义化确定性长上下文回归用例" in text
 
 
 def test_write_eval_results_creates_json_and_markdown(tmp_path):
